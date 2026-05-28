@@ -8,6 +8,7 @@ Teach it once. It repeats forever. 24/7.
 
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)]()
+[![Discord](https://img.shields.io/discord/1376637192334123070?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/yFbZ58eJ)
 
 </div>
 
@@ -153,6 +154,6 @@ Key subsystems:
 
 **If this project helps you, consider giving it a star.**
 
-[Report Bug](https://github.com/sediman/sediman/issues) · [Request Feature](https://github.com/sediman/sediman/issues)
+[Report Bug](https://github.com/sediman/sediman/issues) · [Request Feature](https://github.com/sediman/sediman/issues) · [Join Discord](https://discord.gg/yFbZ58eJ)
 
 </div>
