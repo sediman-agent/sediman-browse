@@ -33,6 +33,7 @@ class CronManager:
     def __init__(self) -> None:
         self.jobs_dir = JOBS_DIR
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.results_file = self.jobs_dir / "results.jsonl"
 
     def _job_path(self, job_id: str) -> Path:
         if not _JOB_ID_RE.match(job_id):
@@ -121,12 +122,12 @@ class CronManager:
             "result": result[:MAX_RESULT_CHARS],
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        with open(RESULTS_FILE, "a") as f:
+        with open(self.results_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
         self._trim_result_history(job_id)
 
     def _trim_result_history(self, job_id: str) -> None:
-        if not RESULTS_FILE.exists():
+        if not self.results_file.exists():
             return
         entries = self._read_all_results()
         job_entries = [e for e in entries if e["job_id"] == job_id]
@@ -137,15 +138,15 @@ class CronManager:
         kept = [e for e in job_entries if e["timestamp"] in keep_ids]
         all_kept = other_entries + kept
         all_kept.sort(key=lambda e: e["timestamp"])
-        with open(RESULTS_FILE, "w") as f:
+        with open(self.results_file, "w") as f:
             for e in all_kept:
                 f.write(json.dumps(e) + "\n")
 
     def _read_all_results(self) -> list[dict[str, Any]]:
-        if not RESULTS_FILE.exists():
+        if not self.results_file.exists():
             return []
         entries = []
-        with open(RESULTS_FILE) as f:
+        with open(self.results_file) as f:
             for line in f:
                 line = line.strip()
                 if line:
