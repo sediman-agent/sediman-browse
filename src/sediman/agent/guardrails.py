@@ -272,7 +272,14 @@ class ApprovalCallback:
 
 GLOBAL_APPROVAL = ApprovalCallback()
 
-_DESTRUCTIVE_TOOLS = {"write_file", "patch", "terminal", "skill_manage"}
+_DESTRUCTIVE_TOOLS = {"write_file", "patch", "skill_manage"}
+_SAFE_COMMANDS = frozenset({
+    "ls", "cat", "head", "tail", "pwd", "echo", "which", "whoami",
+    "env", "printenv", "date", "uname", "hostname", "id", "df", "du",
+    "grep", "rg", "find", "wc", "sort", "uniq", "diff", "file",
+    "stat", "tree", "type", "git status", "git log", "git diff",
+    "git branch", "git remote", "git show", "git stash list",
+})
 _RISKY_URL_PATTERNS = [
     "delete", "remove", "unsubscribe", "cancel",
     "purchase", "checkout", "pay", "buy",
@@ -281,6 +288,16 @@ _RISKY_URL_PATTERNS = [
 
 
 def assess_risk(tool_name: str, arguments: dict[str, Any]) -> str:
+    if tool_name == "terminal":
+        command = arguments.get("command", "").strip()
+        first_word = command.split()[0] if command.split() else ""
+        if first_word in _SAFE_COMMANDS:
+            return "low"
+        if any(p in command.lower() for p in _RISKY_URL_PATTERNS):
+            return "high"
+        if any(p in command.lower() for p in ("rm ", "rmdir", "del ", "format", "mkfs", "dd ", "> ", ">> ")):
+            return "high"
+        return "medium"
     if tool_name in _DESTRUCTIVE_TOOLS:
         return "high"
     if tool_name in ("browser_navigate", "browser_click", "browser_type"):

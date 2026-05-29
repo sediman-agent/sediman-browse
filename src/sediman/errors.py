@@ -95,6 +95,19 @@ _ERROR_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_NEGATIVE_CONTEXT = re.compile(
+    r"(?:no\s+error|without\s+error|error[- ]?free|error\s+code\s+0|"
+    r"no\s+errors?\s+(?:found|detected|reported)|successfully|completed\s+successfully)",
+    re.IGNORECASE,
+)
+
+_STRUCTURAL_ERROR = re.compile(
+    r"(?:traceback\s|exception\s+in|error:\s+\w|failed\s+to\s|"
+    r"http\s+4\d{2}|http\s+5\d{2}|status.*(?:4\d{2}|5\d{2})|"
+    r"errno\s+\d|exit\s+code\s+[1-9])",
+    re.IGNORECASE,
+)
+
 
 def classify_error(exc: Exception) -> ErrorInfo:
     if isinstance(exc, AuthError):
@@ -152,8 +165,14 @@ def classify_error(exc: Exception) -> ErrorInfo:
 def looks_like_error(text: str) -> bool:
     if not text:
         return True
+    if _NEGATIVE_CONTEXT.search(text):
+        return False
+    if _STRUCTURAL_ERROR.search(text):
+        return True
+    first_line = text.split("\n")[0].lower()
+    if re.match(r"^(error|failed|exception|traceback)", first_line):
+        return True
     matches = _ERROR_PATTERNS.findall(text)
     if len(matches) >= 2:
         return True
-    first_line = text.split("\n")[0].lower()
-    return bool(re.match(r"^(error|failed|exception|traceback)", first_line))
+    return False

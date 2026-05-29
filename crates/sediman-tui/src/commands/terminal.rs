@@ -35,5 +35,4 @@ pub static CMD_TERMINAL: Command = Command {
     aliases: &[],
     description: "Show or set terminal access: /terminal [on|off]",
     category: CommandCategory::Terminal,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

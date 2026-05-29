@@ -22,7 +22,7 @@ pub struct FontAtlas {
     cursor_y: u32,
     glyph_w: u32,
     glyph_h: u32,
-    dirty: bool,
+    dirty_rect: Option<(u32, u32, u32, u32)>,
 }
 
 impl FontAtlas {
@@ -123,7 +123,7 @@ impl FontAtlas {
             cursor_y: cy,
             glyph_w,
             glyph_h,
-            dirty: false,
+            dirty_rect: None,
         }
     }
 
@@ -132,10 +132,6 @@ impl FontAtlas {
             .or_else(|| self.glyphs.get(&'?'))
             .or_else(|| self.glyphs.get(&' '))
             .expect("Font atlas must have at least space and ? glyphs")
-    }
-
-    pub fn contains(&self, ch: char) -> bool {
-        self.glyphs.contains_key(&ch)
     }
 
     pub fn rasterize_glyph(&mut self, font: &Font, font_size: f32, ch: char) -> Option<GlyphInfo> {
@@ -185,14 +181,17 @@ impl FontAtlas {
 
         self.glyphs.insert(ch, info);
         self.cursor_x += self.glyph_w;
-        self.dirty = true;
+        self.dirty_rect = Some(match self.dirty_rect {
+            Some((x0, y0, x1, y1)) => (
+                x0.min(cx), y0.min(cy), x1.max(cx + w), y1.max(cy + h),
+            ),
+            None => (cx, cy, cx + w, cy + h),
+        });
 
         Some(info)
     }
 
-    pub fn take_dirty(&mut self) -> bool {
-        let d = self.dirty;
-        self.dirty = false;
-        d
+    pub fn take_dirty_rect(&mut self) -> Option<(u32, u32, u32, u32)> {
+        self.dirty_rect.take()
     }
 }

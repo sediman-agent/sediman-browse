@@ -19,18 +19,71 @@ use crate::update::handle_message;
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+const STEP_LOG_CAP: usize = 200;
+const AGENT_STEPS_CAP: usize = 500;
+const FRAME_INTERVAL_MS: u64 = 33;
+const HEALTH_CHECK_INTERVAL_TICKS: u64 = 90;
+
+/// Modal overlay types — only one can be active at a time.
+#[derive(Clone, Debug)]
+pub enum AppModal {
+    Help,
+    ModelPicker,
+    ProviderPicker,
+    MemoryEditor,
+    SoulEditor,
+    Info {
+        title: String,
+        lines: Vec<ModalLine>,
+        scroll: u16,
+    },
+}
+
+/// A line in an info modal, with optional styling.
+#[derive(Clone, Debug)]
+pub struct ModalLine {
+    pub text: String,
+    pub style: ModalLineStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ModalLineStyle {
+    Normal,
+    Accent,
+    Muted,
+    Primary,
+    Error,
+    Heading,
+}
+
+impl ModalLine {
+    pub fn new(text: impl Into<String>, style: ModalLineStyle) -> Self {
+        Self { text: text.into(), style }
+    }
+    pub fn normal(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Normal) }
+    pub fn accent(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Accent) }
+    pub fn muted(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Muted) }
+    pub fn primary(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Primary) }
+    pub fn error(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Error) }
+    pub fn heading(text: impl Into<String>) -> Self { Self::new(text, ModalLineStyle::Heading) }
+    pub fn blank() -> Self { Self::new(String::new(), ModalLineStyle::Normal) }
+}
+
 pub struct App {
     pub provider: String,
     pub model: Option<String>,
+    pub base_url: Option<String>,
     pub headless: bool,
     pub bridge: ApiClient,
     pub theme: Theme,
+    pub theme_name: String,
     pub layout: LayoutManager,
     pub command_registry: CommandRegistry,
     pub editor: TextEditor,
     pub completer: Completer,
     pub permission: PermissionManager,
     pub interrupt: InterruptManager,
+    pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<sediman_tui_core::event::AppEvent>>,
 
     pub running: bool,
     pub task_count: usize,
@@ -44,22 +97,34 @@ pub struct App {
     pub spinner_frame: usize,
     pub step_log: Vec<String>,
     pub last_result: Option<sediman_tui_bridge::AgentResult>,
-    pub show_help: bool,
     pub show_banner: bool,
     pub show_side_panel: bool,
     pub side_panel_tab: SideTab,
-    pub output_text: String,
 
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
     pub auto_scroll: bool,
 
-    // Sidebar cached data
     pub skills_cache: Vec<String>,
     pub memory_cache: Vec<String>,
     pub schedule_cache: Vec<String>,
-    #[allow(dead_code)]
     pub is_connected: bool,
+    pub reconnecting: bool,
+    pub pending_resize: Option<(u16, u16)>,
+
+    // Modal system — only one active at a time
+    pub active_modal: Option<AppModal>,
+    pub model_picker_index: usize,
+    pub model_picker_list: Vec<String>,
+    pub model_picker_input: String,
+    pub provider_picker_index: usize,
+    pub provider_picker_input: String,
+    // Memory editor state
+    pub memory_entries: Vec<(String, String)>, // (target, content)
+    pub memory_editor_input: String,
+    pub memory_editor_index: usize,
+    // Soul editor state
+    pub soul_editor_input: String,
 }
 
 #[derive(Clone, Debug)]
@@ -93,7 +158,7 @@ pub enum SideTab {
 }
 
 impl App {
-    pub fn new(provider: String, model: Option<String>, headless: bool, bridge: ApiClient) -> Self {
+    pub fn new(provider: String, model: Option<String>, base_url: Option<String>, headless: bool, bridge: ApiClient) -> Self {
         let mut layout = LayoutManager::new();
         layout.show_banner = true;
 
@@ -107,15 +172,18 @@ impl App {
         Self {
             provider,
             model,
+            base_url,
             headless,
             bridge,
             theme: Theme::default(),
+            theme_name: "default".into(),
             layout,
             command_registry: registry,
             editor: TextEditor::new(),
             completer,
             permission: PermissionManager::new(),
             interrupt: InterruptManager::new(),
+            event_tx: None,
 
             running: true,
             task_count: 0,
@@ -128,11 +196,9 @@ impl App {
             spinner_frame: 0,
             step_log: Vec::new(),
             last_result: None,
-            show_help: false,
             show_banner: true,
             show_side_panel: false,
             side_panel_tab: SideTab::Status,
-            output_text: String::new(),
 
             messages: Vec::new(),
             scroll_offset: 0,
@@ -142,6 +208,19 @@ impl App {
             memory_cache: Vec::new(),
             schedule_cache: Vec::new(),
             is_connected: true,
+            reconnecting: false,
+            pending_resize: None,
+
+            active_modal: None,
+            model_picker_index: 0,
+            model_picker_list: Vec::new(),
+            model_picker_input: String::new(),
+            provider_picker_index: 0,
+            provider_picker_input: String::new(),
+            memory_entries: Vec::new(),
+            memory_editor_input: String::new(),
+            memory_editor_index: 0,
+            soul_editor_input: String::new(),
         }
     }
 
@@ -184,11 +263,16 @@ impl App {
 
     pub fn append_step(&mut self, step: String) {
         self.step_log.push(step.clone());
-        if self.step_log.len() > 200 {
-            self.step_log.truncate(200);
+        if self.step_log.len() > STEP_LOG_CAP {
+            let excess = self.step_log.len() - STEP_LOG_CAP;
+            self.step_log.drain(0..excess);
         }
         if let Some(ChatMessage::Agent { steps, .. }) = self.messages.last_mut() {
             steps.push(step);
+            if steps.len() > AGENT_STEPS_CAP {
+                let excess = steps.len() - AGENT_STEPS_CAP;
+                steps.drain(0..excess);
+            }
         }
         self.auto_scroll = true;
     }
@@ -215,24 +299,22 @@ impl App {
     pub fn bridge_url(&self) -> &str {
         self.bridge.socket_path_str()
     }
-
-    pub fn context_bar_text(&self) -> String {
-        let total_chars: usize = self.step_log.iter().map(|s| s.len()).sum();
-        let est_tokens = total_chars / 4;
-        let pct = (est_tokens as f64 / 128_000.0).min(1.0);
-        let filled = (10.0 * pct).round() as usize;
-        let bar: String = "▓".repeat(filled) + &"░".repeat(10 - filled);
-        format!("[{}] {}K", bar, est_tokens / 1000)
-    }
 }
 
 pub async fn run(
     mut app: App,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AppEvent>();
+    app.event_tx = Some(event_tx.clone());
 
     let event_loop = EventLoop::new(30.0, event_tx.clone());
     let _handle = tokio::spawn(event_loop.run());
+
+    let shutdown_tx = event_tx.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = shutdown_tx.send(AppEvent::Shutdown);
+    });
 
     let mut stdout = std::io::stdout();
     let (mut width, mut height) = crossterm::terminal::size()?;
@@ -244,9 +326,16 @@ pub async fn run(
     AnsiWriter::hide_cursor(&mut stdout);
 
     let mut tick_counter = 0u64;
+    let mut pending_resize: Option<(u16, u16)> = None;
 
     loop {
-        let (w, h) = crossterm::terminal::size()?;
+        if let Some((w, h)) = pending_resize.take() {
+            width = w;
+            height = h;
+            front.resize(width, height);
+            back.resize(width, height);
+        }
+        let (w, h) = crossterm::terminal::size().unwrap_or((width, height));
         if w != width || h != height {
             width = w;
             height = h;
@@ -257,7 +346,7 @@ pub async fn run(
         back.clear();
         crate::view::render_into(&mut back, &mut app);
 
-        let mut changes = DiffEngine::diff(&front, &back);
+        let mut changes = DiffEngine::diff_and_clear(&mut front, &mut back);
         DiffEngine::optimize(&mut changes);
         ansi.write(&mut stdout, &changes)?;
 
@@ -267,10 +356,21 @@ pub async fn run(
             Some(event) = event_rx.recv() => {
                 handle_message(&mut app, event, &event_tx).await;
             }
-            _ = tokio::time::sleep(Duration::from_millis(33)) => {
+            _ = tokio::time::sleep(Duration::from_millis(FRAME_INTERVAL_MS)) => {
                 tick_counter += 1;
                 if app.agent_running && tick_counter % 3 == 0 {
                     app.advance_spinner();
+                }
+                if tick_counter % HEALTH_CHECK_INTERVAL_TICKS == 0 {
+                    let was_connected = app.is_connected;
+                    app.is_connected = app.bridge.is_connected().await;
+                    if was_connected && !app.is_connected {
+                        app.reconnecting = true;
+                        app.add_system_message("Backend connection lost — reconnecting...".into());
+                    } else if !was_connected && app.is_connected {
+                        app.reconnecting = false;
+                        app.add_system_message("Backend reconnected.".into());
+                    }
                 }
             }
         }
@@ -281,6 +381,25 @@ pub async fn run(
     }
 
     AnsiWriter::show_cursor(&mut stdout);
+
+    // Save config on exit
+    let config = crate::config::TuiConfig {
+        theme: app.theme_name.clone(),
+        permission_mode: app.permission.current_label().to_string(),
+        side_panel_open: app.show_side_panel,
+        side_panel_tab: match app.side_panel_tab {
+            SideTab::Skills => "Skills".into(),
+            SideTab::Memory => "Memory".into(),
+            SideTab::Schedule => "Schedule".into(),
+            SideTab::Status => "Status".into(),
+        },
+        headless: app.headless,
+        saved_models: app.model_picker_list.clone(),
+    };
+    if let Err(e) = config.save() {
+        eprintln!("Warning: {}", e);
+    }
+
     Ok(())
 }
 
@@ -289,7 +408,7 @@ mod tests {
     use super::*;
 
     fn test_app() -> App {
-        App::new("test".into(), Some("gpt-4".into()), true, ApiClient::new("/tmp/test.sock"))
+        App::new("test".into(), Some("gpt-4".into()), None, true, ApiClient::new("/tmp/test.sock"))
     }
 
     #[test]
@@ -355,18 +474,21 @@ mod tests {
         app.start_agent_message("task");
         app.append_step("planning read code".into());
         app.append_step("executing write file".into());
-        match &app.messages[0] {
-            ChatMessage::Agent { steps, .. } => assert_eq!(steps.len(), 2),
-            _ => panic!("Expected Agent message"),
+        let msg = &app.messages[0];
+        assert!(matches!(msg, ChatMessage::Agent { .. }), "Expected Agent message, got {:?}", msg);
+        if let ChatMessage::Agent { steps, .. } = msg {
+            assert_eq!(steps.len(), 2);
         }
     }
 
     #[test]
-    fn test_append_step_truncates_at_200() {
+    fn test_append_step_truncates_at_200_keeps_newest() {
         let mut app = test_app();
         app.start_agent_message("task");
         for i in 0..210 { app.append_step(format!("step {}", i)); }
         assert_eq!(app.step_log.len(), 200);
+        assert!(app.step_log.first().unwrap().contains("step 10"));
+        assert!(app.step_log.last().unwrap().contains("step 209"));
     }
 
     #[test]
@@ -386,17 +508,76 @@ mod tests {
     }
 
     #[test]
-    fn test_context_bar_zero_tokens() {
-        let app = test_app();
-        let text = app.context_bar_text();
-        assert!(text.contains("0K"));
+    fn test_modal_line_constructors() {
+        let line = ModalLine::accent("test");
+        assert_eq!(line.text, "test");
+        assert_eq!(line.style, ModalLineStyle::Accent);
+
+        let line = ModalLine::muted("m");
+        assert_eq!(line.style, ModalLineStyle::Muted);
+
+        let line = ModalLine::primary("p");
+        assert_eq!(line.style, ModalLineStyle::Primary);
+
+        let line = ModalLine::error("e");
+        assert_eq!(line.style, ModalLineStyle::Error);
+
+        let line = ModalLine::heading("h");
+        assert_eq!(line.style, ModalLineStyle::Heading);
+
+        let line = ModalLine::blank();
+        assert!(line.text.is_empty());
+        assert_eq!(line.style, ModalLineStyle::Normal);
     }
 
     #[test]
-    fn test_context_bar_with_content() {
+    fn test_modal_line_new_custom() {
+        let line = ModalLine::new("custom", ModalLineStyle::Primary);
+        assert_eq!(line.text, "custom");
+        assert_eq!(line.style, ModalLineStyle::Primary);
+    }
+
+    #[test]
+    fn test_complete_agent_message_no_messages() {
         let mut app = test_app();
-        for _ in 0..100 { app.step_log.push("a fairly long step description line".into()); }
-        let text = app.context_bar_text();
-        assert!(text.contains("K"));
+        app.complete_agent_message(true, "result".into(), 5, None, None);
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_complete_agent_message_non_agent_last() {
+        let mut app = test_app();
+        app.add_user_message("hello".into(), 1);
+        app.complete_agent_message(true, "result".into(), 5, None, None);
+        assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_start_agent_clears_old_steps() {
+        let mut app = test_app();
+        app.step_log.push("old step".into());
+        app.step_log.push("another old".into());
+        app.start_agent_message("test task");
+        assert_eq!(app.step_log.len(), 1);
+        assert!(app.step_log[0].contains("Task: test task"));
+        assert!(!app.step_log.iter().any(|s| s == "old step"));
+    }
+
+    #[test]
+    fn test_chat_message_system_variant() {
+        let msg = ChatMessage::System { text: "info".into() };
+        match msg {
+            ChatMessage::System { text } => assert_eq!(text, "info"),
+            _ => panic!("Expected System variant"),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_error_variant() {
+        let msg = ChatMessage::Error { text: "fail".into() };
+        match msg {
+            ChatMessage::Error { text } => assert_eq!(text, "fail"),
+            _ => panic!("Expected Error variant"),
+        }
     }
 }

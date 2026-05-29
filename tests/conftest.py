@@ -28,12 +28,22 @@ def tmp_sediman_dir(tmp_path: Path):
          patch("sediman.agent.prompts.builder.SOUL_FILE", tmp_path / "SOUL.md"), \
          patch("sediman.agent.prompts.builder.CONTEXT_FILE", tmp_path / "CONTEXT.md"), \
          patch("sediman.agent.soul.SOUL_FILE", tmp_path / "SOUL.md"), \
-         patch("sediman.skills.engine.SKILLS_DIR", tmp_path / "skills"), \
+                   patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path / "skills"), \
          patch("sediman.scheduler.cron.JOBS_DIR", tmp_path / "cron"), \
          patch("sediman.scheduler.cron.RESULTS_FILE", tmp_path / "cron" / "results.jsonl"), \
          patch("sediman.browser.session.SESSION_DIR", tmp_path / "sessions"), \
          patch("sediman.browser.session.DATA_DIR", tmp_path):
         yield tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    yield
+    try:
+        from sediman.web.extract import clear_url_cache
+        clear_url_cache()
+    except Exception:
+        pass
 
 
 @pytest.fixture

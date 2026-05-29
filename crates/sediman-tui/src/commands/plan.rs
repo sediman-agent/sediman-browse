@@ -18,5 +18,4 @@ pub static CMD_PLAN: Command = Command {
     aliases: &[],
     description: "Toggle plan mode (read-only research)",
     category: CommandCategory::Agent,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

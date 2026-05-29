@@ -72,3 +72,31 @@ class TestIsTurboEligible:
     def test_not_eligible_no_action_verb(self):
         loop = self._make_loop()
         assert not loop._is_turbo_eligible("tell me about quantum physics")
+
+    def test_not_eligible_schedule_multilang(self):
+        loop = self._make_loop()
+        assert not loop._is_turbo_eligible("每天检查股票价格")
+        assert not loop._is_turbo_eligible("monitor diariamente")
+        assert not loop._is_turbo_eligible("check monitor täglich")
+
+    def test_not_eligible_chat_multilang(self):
+        loop = self._make_loop()
+        assert not loop._is_turbo_eligible("什么是量子物理")
+        assert not loop._is_turbo_eligible("explicar la física")
+
+    def test_not_eligible_ambiguous_multilang(self):
+        loop = self._make_loop()
+        assert not loop._is_turbo_eligible("抱歉 打开百度")
+        assert not loop._is_turbo_eligible("espera busca google")
+
+    def test_eligible_multilang_action_verbs(self):
+        loop = self._make_loop()
+        assert loop._is_turbo_eligible("打开google.com")
+        assert loop._is_turbo_eligible("abrir amazon")
+        assert loop._is_turbo_eligible("ouvrir le site web")
+        assert loop._is_turbo_eligible("öffne google.de")
+        assert loop._is_turbo_eligible("検索 cats")
+        assert loop._is_turbo_eligible("검색 cats")
+        assert loop._is_turbo_eligible("登录我的账号")
+        assert loop._is_turbo_eligible("clic aquí")
+        assert loop._is_turbo_eligible("скачать файл")

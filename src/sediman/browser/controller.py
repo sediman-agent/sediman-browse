@@ -53,6 +53,14 @@ class PageSnapshot:
     scroll_position: dict[str, int] | None = None
 
 
+@dataclass
+class BrowserState:
+    url: str
+    scroll_x: int
+    scroll_y: int
+    title: str = ""
+
+
 class BrowserController:
     """Thin Playwright-based browser controller.
 
@@ -77,6 +85,7 @@ class BrowserController:
         self._on_step = on_step
         self._element_counter = 0
         self._page_provider: Callable[[], Any] | None = None
+        self._saved_states: list[BrowserState] = []
 
     def set_page_provider(self, provider: Callable[[], Any]) -> None:
         self._page_provider = provider
@@ -122,6 +131,7 @@ class BrowserController:
                 ],
                 viewport={"width": 1280, "height": 720},
             )
+            self._context = self._own_browser
             pages = self._own_browser.pages
             self._own_page = pages[0] if pages else await self._own_browser.new_page()
             self._started = True
@@ -171,10 +181,6 @@ class BrowserController:
             return "Browser not started."
         try:
             response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await self._page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
             final_url = self._page.url
             status = response.status if response else "unknown"
             self._emit_step("navigate", f"{final_url} (status: {status})")
@@ -496,6 +502,42 @@ class BrowserController:
             text_preview=text_preview,
             scroll_position=scroll_position,
         )
+
+    async def save_checkpoint(self) -> int:
+        if not self._page:
+            return -1
+        try:
+            url = self._page.url
+            scroll = await self._page.evaluate("() => ({x: window.scrollX, y: window.scrollY})")
+            title = await self._page.title()
+            state = BrowserState(
+                url=url,
+                scroll_x=scroll.get("x", 0),
+                scroll_y=scroll.get("y", 0),
+                title=title,
+            )
+            self._saved_states.append(state)
+            return len(self._saved_states) - 1
+        except Exception as e:
+            logger.warning("save_checkpoint_failed", error=str(e))
+            return -1
+
+    async def restore_checkpoint(self, index: int = -1) -> bool:
+        if not self._saved_states or not self._page:
+            return False
+        try:
+            state = self._saved_states[index]
+            await self._page.goto(state.url, wait_until="domcontentloaded", timeout=15000)
+            await self._page.evaluate(
+                f"() => window.scrollTo({state.scroll_x}, {state.scroll_y})"
+            )
+            return True
+        except Exception as e:
+            logger.warning("restore_checkpoint_failed", error=str(e))
+            return False
+
+    def clear_checkpoints(self) -> None:
+        self._saved_states.clear()
 
     async def extract_text(self) -> str:
         """Extract all visible text from the page."""

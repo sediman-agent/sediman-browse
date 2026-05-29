@@ -1,17 +1,5 @@
 import { Hono } from "hono"
 import { callPython } from "../proxy.js"
-import {
-  handleSkillsList, handleSkillsGet, handleSkillsCreate, handleSkillsDelete,
-} from "../../../sdk/src/modules/skills.js"
-import {
-  handleHubBrowse, handleHubSearch, handleHubInfo,
-  handleHubInstall, handleHubInstallGithub,
-  handleHubCheckUpdate, handleHubUpdateSkill, handleHubGetLockInfo,
-} from "../../../sdk/src/modules/hub.js"
-import { handleScheduleList, handleScheduleAdd, handleScheduleRemove } from "../../../sdk/src/modules/schedule.js"
-import { handleMemoryGet, handleMemoryAdd } from "../../../sdk/src/modules/memory.js"
-import { handleSessionsList, handleSessionSave } from "../../../sdk/src/modules/sessions.js"
-import type { CreateSkillParams } from "../../../sdk/src/modules/skills.js"
 
 const api = new Hono()
 
@@ -44,14 +32,14 @@ api.get("/task/:taskId", (c) => {
   return c.json(entry)
 })
 
-// ── Skills ─────────────────────────────────────────────────────
-api.get("/skills", async (c) => c.json(await handleSkillsList()))
+// ── Skills (proxied to Python) ─────────────────────────────────
+api.get("/skills", async (c) => c.json(await callPython("skills.list", {})))
 api.get("/skills/:name", async (c) => {
-  const r = await handleSkillsGet({ name: c.req.param("name") })
-  return r ? c.json(r) : c.json({ error: { code: "NOT_FOUND", message: "Skill not found" } }, 404)
+  try { return c.json(await callPython("skills.get", { name: c.req.param("name") })) }
+  catch { return c.json({ error: { code: "NOT_FOUND", message: "Skill not found" } }, 404) }
 })
 api.post("/skills", async (c) => {
-  try { return c.json(await handleSkillsCreate(await c.req.json<CreateSkillParams>()), 201) }
+  try { return c.json(await callPython("skills.create", await c.req.json()), 201) }
   catch (e: unknown) { return c.json({ error: { code: "CREATE_ERROR", message: String(e) } }, 400) }
 })
 api.post("/skills/:name/run", async (c) => {
@@ -59,8 +47,8 @@ api.post("/skills/:name/run", async (c) => {
   catch (e: unknown) { return c.json({ error: { code: "EXECUTION_ERROR", message: String(e) } }, 500) }
 })
 api.delete("/skills/:name", async (c) => {
-  const r = await handleSkillsDelete({ name: c.req.param("name") })
-  return r.deleted ? c.json(r) : c.json({ error: { code: "NOT_FOUND", message: "Skill not found" } }, 404)
+  try { return c.json(await callPython("skills.delete", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "DELETE_ERROR", message: String(e) } }, 500) }
 })
 
 // ── Recording (proxied) ────────────────────────────────────────
@@ -77,57 +65,91 @@ api.get("/skills/record/active", async (c) => {
   catch (e: unknown) { return c.json({ error: { code: "QUERY_FAILED", message: String(e) } }, 500) }
 })
 
-// ── Hub ────────────────────────────────────────────────────────
-api.get("/hub/browse", async (c) => c.json(await handleHubBrowse({ category: c.req.query("category") || undefined })))
+// ── Hub (proxied to Python) ────────────────────────────────────
+api.get("/hub/browse", async (c) => {
+  try { return c.json(await callPython("hub.browse", { category: c.req.query("category") || undefined })) }
+  catch (e: unknown) { return c.json({ error: { code: "BROWSE_ERROR", message: String(e) } }, 500) }
+})
 api.get("/hub/search", async (c) => {
   const q = c.req.query("q")
   if (!q) return c.json({ error: { code: "VALIDATION_ERROR", message: "query param 'q' required" } }, 400)
-  return c.json(await handleHubSearch({ query: q }))
+  try { return c.json(await callPython("hub.search", { query: q })) }
+  catch (e: unknown) { return c.json({ error: { code: "SEARCH_ERROR", message: String(e) } }, 500) }
 })
 api.get("/hub/:name", async (c) => {
-  const r = await handleHubInfo({ name: c.req.param("name") })
-  return r ? c.json(r) : c.json({ error: { code: "NOT_FOUND", message: "Hub skill not found" } }, 404)
+  try { return c.json(await callPython("hub.info", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "NOT_FOUND", message: String(e) } }, 404) }
 })
 api.post("/hub/install", async (c) => {
-  try { return c.json(await handleHubInstall(await c.req.json())) }
+  try { return c.json(await callPython("hub.install", await c.req.json())) }
   catch (e: unknown) { return c.json({ error: { code: "INSTALL_ERROR", message: String(e) } }, 500) }
 })
 api.post("/hub/install-github", async (c) => {
-  try { return c.json(await handleHubInstallGithub(await c.req.json())) }
+  try { return c.json(await callPython("hub.install_github", await c.req.json())) }
   catch (e: unknown) { return c.json({ error: { code: "INSTALL_ERROR", message: String(e) } }, 500) }
 })
-api.get("/hub/check-update/:name", async (c) => c.json(await handleHubCheckUpdate({ name: c.req.param("name") })))
-api.post("/hub/update/:name", async (c) => c.json(await handleHubUpdateSkill({ name: c.req.param("name") })))
+api.get("/hub/check-update/:name", async (c) => {
+  try { return c.json(await callPython("hub.check_update", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "CHECK_ERROR", message: String(e) } }, 500) }
+})
+api.post("/hub/update/:name", async (c) => {
+  try { return c.json(await callPython("hub.update_skill", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "UPDATE_ERROR", message: String(e) } }, 500) }
+})
+api.delete("/hub/:name", async (c) => {
+  try { return c.json(await callPython("hub.remove", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "REMOVE_ERROR", message: String(e) } }, 500) }
+})
 api.get("/hub/lock/:name", async (c) => {
-  const r = await handleHubGetLockInfo({ name: c.req.param("name") })
-  return r ? c.json(r) : c.json({ error: { code: "NOT_FOUND", message: "No lock info" } }, 404)
+  try { return c.json(await callPython("hub.get_lock_info", { name: c.req.param("name") })) }
+  catch (e: unknown) { return c.json({ error: { code: "NOT_FOUND", message: String(e) } }, 404) }
 })
 
-// ── Schedule ───────────────────────────────────────────────────
-api.get("/schedule", async (c) => c.json(await handleScheduleList()))
+// ── Schedule (proxied to Python) ────────────────────────────────
+api.get("/schedule", async (c) => {
+  try { return c.json(await callPython("schedule.list", {})) }
+  catch (e: unknown) { return c.json({ error: { code: "LIST_ERROR", message: String(e) } }, 500) }
+})
 api.post("/schedule", async (c) => {
-  try { return c.json(await handleScheduleAdd(await c.req.json()), 201) }
+  try { return c.json(await callPython("schedule.add", await c.req.json()), 201) }
   catch (e: unknown) { return c.json({ error: { code: "VALIDATION_ERROR", message: String(e) } }, 400) }
 })
 api.get("/schedule/:jobId", async (c) => {
-  const jobs = (await handleScheduleList()).jobs as Record<string, unknown>[]
-  const job = jobs.find(j => j.id === c.req.param("jobId"))
-  return job ? c.json(job) : c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404)
+  try {
+    const jobs = await callPython("schedule.list", {}) as Array<Record<string, unknown>>
+    const job = jobs?.find(j => j.id === c.req.param("jobId"))
+    return job ? c.json(job) : c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404)
+  } catch (e: unknown) {
+    return c.json({ error: { code: "LIST_ERROR", message: String(e) } }, 500)
+  }
 })
-api.delete("/schedule/:jobId", async (c) => c.json(await handleScheduleRemove({ job_id: c.req.param("jobId") })))
+api.delete("/schedule/:jobId", async (c) => {
+  try { return c.json(await callPython("schedule.remove", { job_id: c.req.param("jobId") })) }
+  catch (e: unknown) { return c.json({ error: { code: "REMOVE_ERROR", message: String(e) } }, 500) }
+})
 
-// ── Memory ─────────────────────────────────────────────────────
-api.get("/memory", async (c) => c.json(await handleMemoryGet()))
+// ── Memory (writes proxied, reads direct for speed) ─────────────
+api.get("/memory", async (c) => {
+  try { return c.json(await callPython("memory.get", {})) }
+  catch (e: unknown) { return c.json({ error: { code: "MEMORY_ERROR", message: String(e) } }, 500) }
+})
 api.post("/memory", async (c) => {
-  try { return c.json(await handleMemoryAdd(await c.req.json()), 201) }
+  try { return c.json(await callPython("memory.add", await c.req.json()), 201) }
   catch (e: unknown) { return c.json({ error: { code: "MEMORY_ERROR", message: String(e) } }, 400) }
 })
 
-// ── Sessions ───────────────────────────────────────────────────
-api.get("/sessions", async (c) => c.json(await handleSessionsList({})))
+// ── Sessions (proxied to Python for SQLite backend) ─────────────
+api.get("/sessions", async (c) => {
+  try { return c.json(await callPython("sessions.list", {})) }
+  catch (e: unknown) { return c.json({ error: { code: "SESSION_ERROR", message: String(e) } }, 500) }
+})
 api.post("/sessions", async (c) => {
-  try { return c.json(await handleSessionSave(await c.req.json()), 201) }
+  try { return c.json(await callPython("sessions.save", await c.req.json()), 201) }
   catch (e: unknown) { return c.json({ error: { code: "SESSION_ERROR", message: String(e) } }, 400) }
+})
+api.get("/sessions/:id", async (c) => {
+  try { return c.json(await callPython("sessions.get", { session_id: c.req.param("id") })) }
+  catch (e: unknown) { return c.json({ error: { code: "NOT_FOUND", message: String(e) } }, 404) }
 })
 
 // ── Screenshot (proxied) ──────────────────────────────────────

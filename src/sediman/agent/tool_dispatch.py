@@ -221,10 +221,11 @@ class ToolRegistry:
 
 
 class ToolLoop:
-    def __init__(self, llm: LLMProvider, registry: ToolRegistry, max_rounds: int = 10):
+    def __init__(self, llm: LLMProvider, registry: ToolRegistry, max_rounds: int = 30, budget: Any = None):
         self.llm = llm
         self.registry = registry
         self.max_rounds = max_rounds
+        self._budget = budget
 
     async def run(
         self,
@@ -232,12 +233,21 @@ class ToolLoop:
         system: str | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> LLMResponse:
+        from sediman.agent.guardrails import Budget
+
         all_messages: list[dict[str, Any]] = []
         if system:
             all_messages.append({"role": "system", "content": system})
         all_messages.extend(messages)
 
+        response: LLMResponse | None = None
         for _round in range(self.max_rounds):
+            if self._budget is not None:
+                exhausted, reason = self._budget.is_exhausted()
+                if exhausted:
+                    logger.warning("tool_loop_budget_exhausted", reason=reason, round=_round)
+                    break
+
             InterruptSignal.get().check()
 
             response = await self.llm.chat(
@@ -267,18 +277,35 @@ class ToolLoop:
                 }
             )
 
-            for tc in response.tool_calls:
+            if len(response.tool_calls) > 1:
+                async def _dispatch_one(tc: Any) -> tuple[str, ToolResult]:
+                    if on_tool_call:
+                        on_tool_call(tc.name, tc.arguments)
+                    result = await self.registry.dispatch(tc.name, tc.arguments)
+                    return (tc.id, result)
+
+                dispatch_results = await asyncio.gather(
+                    *[_dispatch_one(tc) for tc in response.tool_calls]
+                )
+                for tc_id, result in dispatch_results:
+                    all_messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": result.output}
+                    )
+            else:
+                tc = response.tool_calls[0]
                 if on_tool_call:
                     on_tool_call(tc.name, tc.arguments)
-
                 result = await self.registry.dispatch(tc.name, tc.arguments)
-
                 all_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result.output,
-                    }
+                    {"role": "tool", "tool_call_id": tc.id, "content": result.output}
                 )
 
-        return response
+        if response and response.tool_calls:
+            tool_summary = "; ".join(f"{tc.name}({list(tc.arguments.keys())})" for tc in response.tool_calls)
+            return LLMResponse(
+                text=f"[Tool loop exhausted after {self.max_rounds} rounds. Pending: {tool_summary}]",
+                tool_calls=[],
+                done=True,
+            )
+
+        return response or LLMResponse(text="", tool_calls=[], done=True)

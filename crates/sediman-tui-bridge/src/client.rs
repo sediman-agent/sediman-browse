@@ -95,6 +95,38 @@ impl ApiClient {
         Ok(response["result"].clone())
     }
 
+    /// Send a JSON-RPC request with automatic retry on connection failure.
+    /// Retries up to `max_retries` times with exponential backoff.
+    #[allow(dead_code)]
+    pub async fn call_with_retry<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        max_retries: u32,
+    ) -> BridgeResult<T> {
+        let mut attempt = 0;
+        loop {
+            match self.call(method, params.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(BridgeError::Connection(msg)) => {
+                    attempt += 1;
+                    if attempt > max_retries {
+                        return Err(BridgeError::Connection(msg));
+                    }
+                    // Exponential backoff: 100ms, 200ms, 400ms, 800ms...
+                    let delay = std::time::Duration::from_millis(100 * 2u64.pow(attempt - 1));
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Check if the backend socket exists and is connectable.
+    pub async fn is_connected(&self) -> bool {
+        tokio::fs::metadata(&self.socket_path).await.is_ok()
+    }
+
     // ── public API methods ──────────────────────────────────────
 
     pub async fn status(&self) -> BridgeResult<ServerStatus> {
@@ -147,6 +179,15 @@ impl ApiClient {
         Ok(())
     }
 
+    pub async fn hub_install_github(&self, ref_: &str, force: bool) -> BridgeResult<()> {
+        self.call::<serde_json::Value>(
+            "hub.install_github",
+            serde_json::json!({"ref": ref_, "force": force}),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn hub_info(&self, name: &str) -> BridgeResult<HubSkill> {
         self.call("hub.info", serde_json::json!({"name": name}))
             .await
@@ -188,8 +229,71 @@ impl ApiClient {
     }
 
     pub async fn get_screenshot(&self) -> BridgeResult<Vec<u8>> {
-        // screenshot is handled locally by the TUI — return empty
-        Ok(Vec::new())
+        let resp: serde_json::Value = self
+            .call("system.screenshot", serde_json::json!({}))
+            .await?;
+        match resp.get("data").and_then(|d| d.as_str()) {
+            Some(hex_data) => {
+                let bytes: Result<Vec<u8>, _> = (0..hex_data.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&hex_data[i..i + 2], 16))
+                    .collect();
+                bytes.map_err(|e| BridgeError::Api(format!("hex decode: {}", e)))
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub async fn start_recording(&self, name: &str) -> BridgeResult<String> {
+        let resp: serde_json::Value = self
+            .call("record.start", serde_json::json!({"name": name}))
+            .await?;
+        Ok(resp["id"].as_str().unwrap_or("unknown").to_string())
+    }
+
+    pub async fn stop_recording(&self, id: &str) -> BridgeResult<()> {
+        self.call::<serde_json::Value>(
+            "record.stop",
+            serde_json::json!({"id": id}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_soul(&self, text: &str) -> BridgeResult<()> {
+        self.call::<serde_json::Value>(
+            "system.set_soul",
+            serde_json::json!({"text": text}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn reset_soul(&self) -> BridgeResult<()> {
+        self.call::<serde_json::Value>(
+            "system.set_soul",
+            serde_json::json!({"text": "", "reset": true}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Switch the LLM provider/model/base-url at runtime via model.switch RPC.
+    pub async fn switch_model(
+        &self,
+        provider: &str,
+        model: Option<&str>,
+        base_url: Option<&str>,
+    ) -> BridgeResult<()> {
+        let mut params = serde_json::json!({"provider": provider});
+        if let Some(m) = model {
+            params["model"] = serde_json::json!(m);
+        }
+        if let Some(url) = base_url {
+            params["base_url"] = serde_json::json!(url);
+        }
+        self.call::<serde_json::Value>("model.switch", params).await?;
+        Ok(())
     }
 }
 

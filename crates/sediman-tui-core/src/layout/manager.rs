@@ -21,11 +21,16 @@ impl LayoutManager {
             show_banner: true,
             show_progress: false,
             show_side_panel: false,
-            input_lines: 3,
+            input_lines: 4,
         }
     }
 
     pub fn split(&self, area: Rect) -> LayoutZones {
+        let area = if area.width < 10 || area.height < 3 {
+            Rect::new(area.x, area.y, area.width.max(10), area.height.max(3))
+        } else {
+            area
+        };
         let title_bar = Rect::new(area.x, area.y, area.width, 1);
         let input_area = Rect::new(area.x, area.y + area.height.saturating_sub(self.input_lines), area.width, self.input_lines);
         let status_bar = Rect::new(area.x, input_area.y.saturating_sub(1), area.width, 1);
@@ -138,5 +143,44 @@ mod tests {
         assert_eq!(zones.status_bar.width, 120);
         assert_eq!(zones.input.width, 120);
         assert_eq!(zones.main.width, 120);
+    }
+
+    #[test]
+    fn test_split_zones_non_overlapping() {
+        let mut lm = LayoutManager::new();
+        let area = Rect::new(0, 0, 80, 24);
+        lm.show_side_panel = false;
+        let zones = lm.split(area);
+
+        assert!(zones.title_bar.y < zones.main.y);
+        assert!(zones.main.y + zones.main.height <= zones.status_bar.y);
+        assert!(zones.status_bar.y + zones.status_bar.height <= zones.input.y);
+    }
+
+    #[test]
+    fn test_split_zones_cover_full_width() {
+        let mut lm = LayoutManager::new();
+        let area = Rect::new(0, 0, 80, 24);
+        lm.show_side_panel = false;
+        let zones = lm.split(area);
+
+        assert_eq!(zones.title_bar.width, 80);
+        assert_eq!(zones.main.width, 80);
+        assert_eq!(zones.status_bar.width, 80);
+        assert_eq!(zones.input.width, 80);
+    }
+
+    #[test]
+    fn test_split_with_side_panel() {
+        let mut lm = LayoutManager::new();
+        let area = Rect::new(0, 0, 100, 24);
+        lm.show_side_panel = true;
+        let zones = lm.split(area);
+
+        let side = zones.side_panel.expect("side panel should exist");
+        assert!(side.width > 0);
+        assert!(side.width < 100);
+        assert!(zones.main.width > 0);
+        assert!(zones.main.width < 100);
     }
 }

@@ -17,6 +17,10 @@ class StepData:
     expected_outcome: str | None = None
     index: int | None = None
     duration_ms: int | None = None
+    wait_for: str | None = None
+    condition: str | None = None
+    on_error: str | None = None
+    screenshot_verify: str | None = None
 
     def to_string(self) -> str:
         if self.action_type == "navigate" and self.url:
@@ -61,6 +65,14 @@ class StepData:
             d["expected_outcome"] = self.expected_outcome
         if self.index is not None:
             d["index"] = self.index
+        if self.wait_for:
+            d["wait_for"] = self.wait_for
+        if self.condition:
+            d["condition"] = self.condition
+        if self.on_error:
+            d["on_error"] = self.on_error
+        if self.screenshot_verify:
+            d["screenshot_verify"] = self.screenshot_verify
         return d
 
     @classmethod
@@ -76,6 +88,10 @@ class StepData:
             expected_outcome=data.get("expected_outcome"),
             index=data.get("index"),
             duration_ms=data.get("duration_ms"),
+            wait_for=data.get("wait_for"),
+            condition=data.get("condition"),
+            on_error=data.get("on_error"),
+            screenshot_verify=data.get("screenshot_verify"),
         )
 
     @classmethod
@@ -147,6 +163,20 @@ class SkillData:
     use_count: int = 0
     last_used_at: str | None = None
     verification: str | None = None
+    disable_model_invocation: bool = False
+    allowed_tools: dict[str, str] | None = None
+    context: str = ""
+    paths: list[str] | None = None
+    inputs: list[dict[str, str]] | None = None
+    outputs: list[dict[str, str]] | None = None
+    dependencies: list[str] | None = None
+    retry_policy: str | None = None
+    timeout_seconds: int | None = None
+    examples: list[str] | None = None
+    success_rate: float | None = None
+    last_error: str | None = None
+    execution_count: int = 0
+    avg_duration_ms: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -178,6 +208,34 @@ class SkillData:
             d["last_used_at"] = self.last_used_at
         if self.verification:
             d["verification"] = self.verification
+        if self.disable_model_invocation:
+            d["disable_model_invocation"] = True
+        if self.allowed_tools:
+            d["allowed_tools"] = self.allowed_tools
+        if self.context:
+            d["context"] = self.context
+        if self.paths:
+            d["paths"] = self.paths
+        if self.inputs:
+            d["inputs"] = self.inputs
+        if self.outputs:
+            d["outputs"] = self.outputs
+        if self.dependencies:
+            d["dependencies"] = self.dependencies
+        if self.retry_policy:
+            d["retry_policy"] = self.retry_policy
+        if self.timeout_seconds is not None:
+            d["timeout_seconds"] = self.timeout_seconds
+        if self.examples:
+            d["examples"] = self.examples
+        if self.success_rate is not None:
+            d["success_rate"] = self.success_rate
+        if self.last_error:
+            d["last_error"] = self.last_error
+        if self.execution_count > 0:
+            d["execution_count"] = self.execution_count
+        if self.avg_duration_ms is not None:
+            d["avg_duration_ms"] = self.avg_duration_ms
         return d
 
     def to_skill_md(self) -> str:
@@ -201,6 +259,24 @@ class SkillData:
             meta_parts.append(f"  schedule: \"{self.schedule}\"")
         if self.source != "local":
             meta_parts.append(f"  source: {self.source}")
+        if self.disable_model_invocation:
+            meta_parts.append(f"  disable_model_invocation: true")
+        if self.allowed_tools:
+            meta_parts.append(f"  allowed_tools: {json.dumps(self.allowed_tools)}")
+        if self.context:
+            meta_parts.append(f"  context: {self.context}")
+        if self.paths:
+            meta_parts.append(f"  paths: {json.dumps(self.paths)}")
+        if self.inputs:
+            meta_parts.append(f"  inputs: {json.dumps(self.inputs)}")
+        if self.outputs:
+            meta_parts.append(f"  outputs: {json.dumps(self.outputs)}")
+        if self.dependencies:
+            meta_parts.append(f"  dependencies: {json.dumps(self.dependencies)}")
+        if self.retry_policy:
+            meta_parts.append(f"  retry_policy: {self.retry_policy}")
+        if self.timeout_seconds is not None:
+            meta_parts.append(f"  timeout_seconds: {self.timeout_seconds}")
         if meta_parts:
             lines.append("metadata:")
             lines.extend(meta_parts)
@@ -214,11 +290,46 @@ class SkillData:
             lines.append("## Steps")
             for i, step in enumerate(self.steps, 1):
                 lines.append(f"{i}. {step}")
+        if self.structured_steps:
+            lines.append("")
+            lines.append("## Structured Steps")
+            for i, step in enumerate(self.structured_steps):
+                action = step.get("action_type", "action")
+                desc = step.get("description", "")
+                url = step.get("url", "")
+                sel = step.get("selector", "")
+                expected = step.get("expected_outcome", "")
+                wait = step.get("wait_for", "")
+                parts = [f"- **{action}**: {desc}"]
+                if url:
+                    parts.append(f"  - URL: `{url}`")
+                if sel:
+                    parts.append(f"  - Selector: `{sel}`")
+                if expected:
+                    parts.append(f"  - Expected: {expected}")
+                if wait:
+                    parts.append(f"  - Wait for: {wait}")
+                lines.append("\n".join(parts))
         if self.variables:
             lines.append("")
             lines.append("## Variables")
             for var in self.variables:
                 lines.append(f"- `{var}`")
+        if self.inputs:
+            lines.append("")
+            lines.append("## Inputs")
+            for inp in self.inputs:
+                name = inp.get("name", "")
+                desc = inp.get("description", "")
+                req = inp.get("required", "false")
+                lines.append(f"- `{name}` ({req}): {desc}")
+        if self.outputs:
+            lines.append("")
+            lines.append("## Outputs")
+            for out in self.outputs:
+                name = out.get("name", "")
+                desc = out.get("description", "")
+                lines.append(f"- `{name}`: {desc}")
         if self.schedule:
             lines.append("")
             lines.append("## Schedule")
@@ -236,6 +347,16 @@ class SkillData:
             lines.append("")
             lines.append("## Verification")
             lines.append(self.verification)
+        if self.examples:
+            lines.append("")
+            lines.append("## Examples")
+            for ex in self.examples:
+                lines.append(f"- {ex}")
+        if self.dependencies:
+            lines.append("")
+            lines.append("## Dependencies")
+            for dep in self.dependencies:
+                lines.append(f"- {dep}")
         return "\n".join(lines) + "\n"
 
 
@@ -272,6 +393,16 @@ def parse_skill_md(content: str) -> SkillData | None:
     schedule = meta.get("schedule") or metadata.get("schedule")
     author = meta.get("author") or metadata.get("author")
     source = meta.get("source") or metadata.get("source", "local")
+    disable_model = meta.get("disable_model_invocation") or metadata.get("disable_model_invocation", False)
+    allowed_tools = meta.get("allowed_tools") or metadata.get("allowed_tools")
+    context = meta.get("context") or metadata.get("context", "")
+    paths = meta.get("paths") or metadata.get("paths")
+    inputs = meta.get("inputs") or metadata.get("inputs")
+    outputs = meta.get("outputs") or metadata.get("outputs")
+    dependencies = meta.get("dependencies") or metadata.get("dependencies")
+    retry_policy = meta.get("retry_policy") or metadata.get("retry_policy")
+    timeout_seconds = meta.get("timeout_seconds") or metadata.get("timeout_seconds")
+    examples = _extract_examples_from_body(body)
 
     return SkillData(
         name=meta["name"],
@@ -286,6 +417,16 @@ def parse_skill_md(content: str) -> SkillData | None:
         compatibility=meta.get("compatibility"),
         source=source,
         body=body,
+        disable_model_invocation=bool(disable_model),
+        allowed_tools=allowed_tools,
+        context=str(context) if context else "",
+        paths=paths if isinstance(paths, list) else None,
+        inputs=inputs if isinstance(inputs, list) else None,
+        outputs=outputs if isinstance(outputs, list) else None,
+        dependencies=dependencies if isinstance(dependencies, list) else None,
+        retry_policy=str(retry_policy) if retry_policy else None,
+        timeout_seconds=int(timeout_seconds) if timeout_seconds else None,
+        examples=examples,
     )
 
 
@@ -316,6 +457,20 @@ def parse_skill_json(content: str) -> SkillData | None:
         use_count=data.get("use_count", 0),
         last_used_at=data.get("last_used_at"),
         verification=data.get("verification"),
+        disable_model_invocation=data.get("disable_model_invocation", False),
+        allowed_tools=data.get("allowed_tools"),
+        context=data.get("context", ""),
+        paths=data.get("paths"),
+        inputs=data.get("inputs"),
+        outputs=data.get("outputs"),
+        dependencies=data.get("dependencies"),
+        retry_policy=data.get("retry_policy"),
+        timeout_seconds=data.get("timeout_seconds"),
+        examples=data.get("examples"),
+        success_rate=data.get("success_rate"),
+        last_error=data.get("last_error"),
+        execution_count=data.get("execution_count", 0),
+        avg_duration_ms=data.get("avg_duration_ms"),
     )
 
 
@@ -351,6 +506,21 @@ def _extract_steps_from_body(body: str) -> list[str]:
         if m:
             steps.append(m.group(1))
     return steps
+
+
+def _extract_examples_from_body(body: str) -> list[str] | None:
+    in_examples = False
+    examples = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped.lower().startswith("## examples"):
+            in_examples = True
+            continue
+        if in_examples and stripped.startswith("## "):
+            break
+        if in_examples and stripped.startswith("- "):
+            examples.append(stripped[2:])
+    return examples if examples else None
 
 
 def _parse_simple_yaml(text: str) -> dict[str, Any]:

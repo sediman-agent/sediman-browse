@@ -138,10 +138,11 @@ Please analyze the failure and provide updated steps."""
         return None
 
 
-def verify_skill(
+async def verify_skill(
     skill_name: str,
     skill: dict[str, Any],
     verification_prompt: str,
+    llm: LLMProvider,
     screenshot_path: str | None = None,
     dom_snapshot: str | None = None,
 ) -> dict[str, bool | str]:
@@ -159,7 +160,7 @@ def verify_skill(
 
     prompt += "\nDoes the result satisfy the verification criteria? Respond with JSON: {\"passed\": true/false, \"fail_reason\": \"...\"}"
 
-    messages = [{"role": "user", "content": prompt}]
+    messages: list[dict[str, Any]] = []
 
     screenshot_b64 = _safe_read_screenshot(screenshot_path)
     if screenshot_b64:
@@ -176,8 +177,33 @@ def verify_skill(
                 },
             ],
         })
+    else:
+        messages.append({"role": "user", "content": prompt})
 
-    return {
-        "passed": True,
-        "fail_reason": "",
-    }
+    try:
+        response = await llm.chat(messages=messages, tools=[])
+        if not response.text:
+            logger.warning("verify_skill_no_response", skill=skill_name)
+            return {"passed": False, "fail_reason": "LLM returned no response"}
+
+        from sediman.utils import extract_json_from_text
+
+        data = extract_json_from_text(response.text)
+        if data is None:
+            logger.warning("verify_skill_parse_failed", skill=skill_name, raw=response.text[:200])
+            return {"passed": False, "fail_reason": "Could not parse LLM verification response"}
+
+        passed = bool(data.get("passed", False))
+        fail_reason = data.get("fail_reason", "") if not passed else ""
+
+        logger.info(
+            "skill_verified",
+            skill=skill_name,
+            passed=passed,
+            fail_reason=fail_reason,
+        )
+
+        return {"passed": passed, "fail_reason": fail_reason}
+    except Exception as e:
+        logger.warning("verify_skill_failed", skill=skill_name, error=str(e))
+        return {"passed": False, "fail_reason": f"Verification error: {e}"}

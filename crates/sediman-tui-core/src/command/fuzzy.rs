@@ -69,7 +69,6 @@ mod tests {
         aliases: &["/skill list"],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_HELP: Command = Command {
@@ -77,7 +76,6 @@ mod tests {
         aliases: &["/h", "/?"],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_EXIT: Command = Command {
@@ -85,7 +83,6 @@ mod tests {
         aliases: &["/quit"],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_SCHEDULE: Command = Command {
@@ -93,7 +90,6 @@ mod tests {
         aliases: &[],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_SESSIONS: Command = Command {
@@ -101,7 +97,6 @@ mod tests {
         aliases: &[],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_RUN_SKILL: Command = Command {
@@ -109,7 +104,6 @@ mod tests {
         aliases: &[],
         description: "",
         category: super::super::registry::CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     #[test]
@@ -203,6 +197,24 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_empty_commands() {
+        let cmds: [&Command; 0] = [];
+        assert_eq!(fuzzy_match("/help", &cmds), None);
+    }
+
+    #[test]
+    fn test_levenshtein_distance_boundary() {
+        let cmds: [&Command; 1] = [&CMD_HELP];
+        assert_eq!(fuzzy_match("/helo", &cmds), Some(0));
+    }
+
+    #[test]
+    fn test_levenshtein_distance_too_far() {
+        let cmds: [&Command; 1] = [&CMD_HELP];
+        assert_eq!(fuzzy_match("/helloworld", &cmds), None);
+    }
+
+    #[test]
+    fn test_fuzzy_match_empty_commands_list() {
         let cmds: [&Command; 0] = [];
         assert_eq!(fuzzy_match("/help", &cmds), None);
     }

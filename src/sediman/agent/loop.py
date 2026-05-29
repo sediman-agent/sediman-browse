@@ -9,6 +9,9 @@ from typing import Any, Callable
 
 import structlog
 
+from fnmatch import fnmatch
+from pathlib import Path as _Path
+
 from sediman.agent.browser_agent import BrowserSubagent, BrowserResult
 from sediman.agent.compressor import ContextCompressor
 from sediman.agent.delegate import delegate_parallel
@@ -27,7 +30,7 @@ from sediman.agent.state import (
 )
 from sediman.agent.subagents.factory import SubagentFactory
 from sediman.agent.subagents.registry import SubagentRegistry
-from sediman.agent.tool_dispatch import ToolRegistry
+from sediman.agent.tool_dispatch import ToolRegistry, ToolLoop
 from sediman.agent.tools import create_agent_tool_registry
 from sediman.agent.guardrails import (
     AuditLog,
@@ -38,13 +41,24 @@ from sediman.agent.guardrails import (
     GLOBAL_APPROVAL,
     SharedScratchpad,
 )
+from sediman.agent.progress import (
+    ProgressTracker,
+    generate_milestones_prompt,
+    parse_milestones,
+)
 from sediman.browser.session import BrowserSession
 from sediman.llm.provider import LLMProvider
 from sediman.memory.manager import MemoryManager
 
 logger = structlog.get_logger()
 
+import re as _re
+
 _AGENT_STATE_FILE = Path.home() / ".sediman" / "agent_state.json"
+
+_SIMPLE_URL_RE = _re.compile(
+    r'^(?:go\s+to|open|visit|browse|navigate\s+to)\s+https?://\S+$', _re.IGNORECASE
+)
 
 
 def _load_agent_state() -> dict[str, Any]:
@@ -57,11 +71,21 @@ def _load_agent_state() -> dict[str, Any]:
 
 
 def _save_agent_state(data: dict[str, Any]) -> None:
+    pass
+
+
+def _matches_skill_paths(patterns: list[str]) -> bool:
+    if not patterns:
+        return True
     try:
-        _AGENT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _AGENT_STATE_FILE.write_text(json.dumps(data, indent=2))
-    except OSError:
-        pass
+        cwd = _Path.cwd()
+        files = [str(f.relative_to(cwd)) for f in cwd.rglob("*") if f.is_file()]
+    except Exception:
+        return True
+    for pattern in patterns:
+        if any(fnmatch(f, pattern) for f in files):
+            return True
+    return False
 
 
 @dataclass
@@ -96,12 +120,14 @@ class AgentLoop:
         flash_mode: bool = True,
         max_conversation: int = 40,
         context_window: int = 10,
-        max_iterations: int = 5,
+        max_iterations: int = 50,
         memory_manager: MemoryManager | None = None,
         skip_reflection_on_success: bool = True,
         turbo_mode: bool = False,
     ):
+        self._budget = Budget()
         self.llm = llm_provider
+        self.llm.set_token_callback(self._budget.add_tokens)
         self.browser = browser_session
         self.max_steps = max_steps
         self.on_step = on_step
@@ -135,10 +161,10 @@ class AgentLoop:
         saved = _load_agent_state()
         self._iters_since_skill = saved.get("iters_since_skill", 0)
         self._skill_review_threshold = saved.get("skill_review_threshold", 10)
-        self._budget = Budget()
         self._trace_collector = TraceCollector.get()
         self._audit = AuditLog.get()
         self._scratchpad = SharedScratchpad()
+        self._progress: ProgressTracker | None = None
 
     def _get_tool_registry(self) -> ToolRegistry:
         if self._tool_registry is None:
@@ -170,7 +196,7 @@ class AgentLoop:
             set_subagent_factory(self._subagent_factory)
         return self._subagent_factory
 
-    def _get_browser_agent(self, recording_name: str | None = None) -> BrowserSubagent:
+    def _get_browser_agent(self, recording_name: str | None = None, task: str = "") -> BrowserSubagent:
         on_browser_step = None
         if self.on_step:
             browser_step_counter = [0]
@@ -182,13 +208,12 @@ class AgentLoop:
                     observation=url,
                     phase="executing",
                 ))
-        # Cache memory context once per session, not per subagent
         if self._cached_memory_context is None:
             try:
                 from sediman.memory.store import MemoryStore
                 memory_store = MemoryStore()
                 self._cached_memory_context = memory_store.format_for_system_prompt_filtered(
-                    task, max_chars=800
+                    task or "browser task", max_chars=800
                 )
             except Exception:
                 self._cached_memory_context = ""
@@ -210,6 +235,7 @@ class AgentLoop:
         state = AgentState(task=task, max_iterations=self._max_iterations)
         self._budget = Budget()
         self._budget.start()
+        self.llm.set_token_callback(self._budget.add_tokens)
         trace = self._trace_collector.start_trace("agent.run", task=task[:100])
         root_span = trace.spans[0] if trace.spans else None
 
@@ -226,6 +252,33 @@ class AgentLoop:
         # ── Turbo Path: zero-overhead for simple browser tasks ────
         if self.turbo_mode and self._is_turbo_eligible(task):
             return await self._run_turbo(task, session_id, state)
+
+        # ── Fast Path: URL-only tasks skip LLM planning ────────
+        if _SIMPLE_URL_RE.match(task.strip()) and not self._conversation:
+            self._emit(state, "Direct navigation (URL fast path)", detail=task[:100])
+            url = task.strip().split()[-1]
+            step = PlanStep(id=0, description=task, strategy=Strategy.DIRECT)
+            step.status = "in_progress"
+            recording_name = self._get_active_recording_name()
+            browser_agent = self._get_browser_agent(recording_name=recording_name, task=task)
+            browser_result: BrowserResult = await browser_agent.run(task=task)
+            if browser_agent._browser_use_llm is not None:
+                self._cached_browser_use_llm = browser_agent._browser_use_llm
+            step.result = browser_result.text
+            step.status = "completed"
+            state.actions_taken.extend(browser_result.actions)
+            state.result = browser_result.text
+            self._conversation.append({"role": "user", "content": task})
+            self._conversation.append({"role": "assistant", "content": state.result})
+            if len(self._conversation) > self.max_conversation:
+                self._conversation = self._conversation[-self.max_conversation:]
+            plan = ManagerPlan(browser_task=task, strategy=Strategy.DIRECT)
+            asyncio.create_task(self._run_background_post_task(state, plan, task))
+            return AgentResult(
+                task=task, result=state.result,
+                steps=[StepEvent(step=0, action=f"navigate: {url}", observation=browser_result.text[:200])],
+                actions_taken=state.actions_taken, iterations=1, strategy_used="direct",
+            )
 
         # ── Fast Path: regex planner already resolved scheduling ──
         regex_plan = self._regex_planner.plan(task)
@@ -275,9 +328,21 @@ class AgentLoop:
                 ))
 
         plan = await self._manager.plan(
-            task, self._conversation, previous_failure, on_streaming_token=on_plan_token
+            task, self._conversation, previous_failure, on_streaming_token=on_plan_token,
+            regex_plan=regex_plan,
         )
         state = self._build_plan_steps(state, plan)
+
+        # ── Progress Tracking: milestones + loop detection ────
+        milestones = plan.milestones
+        if not milestones and plan.strategy not in (Strategy.CONVERSATIONAL,) and not plan.schedule:
+            try:
+                milestones = await self._manager.generate_milestones(task)
+            except Exception:
+                milestones = []
+        self._progress = ProgressTracker(milestones=milestones)
+        if milestones:
+            self._emit(state, f"Milestones: {len(milestones)}", detail=" | ".join(milestones[:4]))
 
         logger.info(
             "manager_plan",
@@ -386,6 +451,46 @@ class AgentLoop:
                 detail=observation.content[:100],
             )
 
+            # ── Progress Check (loop detection + milestones) ──
+            if self._progress is not None:
+                page_url = ""
+                page_text = ""
+                try:
+                    ctrl = await self._ensure_browser_controller()
+                    if ctrl and ctrl.is_started:
+                        snap = await ctrl.snapshot()
+                        page_url = snap.url
+                        page_text = snap.text_preview or ""
+                except Exception:
+                    pass
+
+                report = self._progress.check_heuristics(
+                    action=step.description,
+                    page_url=page_url,
+                    page_text=page_text,
+                )
+
+                if report.loop_detected:
+                    self._emit(state, "LOOP DETECTED", detail=report.reason)
+                    logger.warning("loop_detected", step=step.id, reason=report.reason)
+
+                if report.should_replan:
+                    self._audit.record("agent", "progress_replan", report.reason)
+
+                if self._progress.should_check_milestone():
+                    next_m = self._progress.milestones.next_unachieved()
+                    if next_m:
+                        m_report = await self._progress.check_milestone(
+                            llm=self.llm,
+                            milestone=next_m,
+                            page_snapshot=page_text,
+                            page_url=page_url,
+                        )
+                        if m_report.milestone_achieved:
+                            self._emit(state, f"MILESTONE: {m_report.milestone_achieved}")
+                        if m_report.should_replan:
+                            self._emit(state, "MILESTONE STUCK", detail=m_report.reason)
+
             # ── Phase 4: Reflect (conditional) ──────────────
             # Skip reflection if the step succeeded and produced substantial output,
             # unless it's a complex multi-step task or previous errors exist.
@@ -432,30 +537,25 @@ class AgentLoop:
         )
 
     def _is_turbo_eligible(self, task: str) -> bool:
+        from sediman.agent.locales import (
+            SCHEDULE_KEYWORDS,
+            CHAT_KEYWORDS,
+            AMBIGUOUS_KEYWORDS,
+            ACTION_VERBS,
+        )
+
         if self._conversation:
             return False
         if len(task) > 500:
             return False
         task_lower = task.lower()
-        schedule_kw = ("schedule", "cron", "remind", "recurring", "interval", "periodically", "every day", "every hour", "every week")
-        if any(kw in task_lower for kw in schedule_kw):
+        if any(kw in task_lower for kw in SCHEDULE_KEYWORDS):
             return False
-        chat_kw = ("chat", "converse", "discuss", "explain", "what is", "how does", "why", "help me understand")
-        if any(kw in task_lower for kw in chat_kw):
+        if any(kw in task_lower for kw in CHAT_KEYWORDS):
             return False
-        ambiguous_kw = ("sorry", "actually", "wait", "never mind", "no i meant", "i meant", "instead")
-        if any(kw in task_lower for kw in ambiguous_kw):
+        if any(kw in task_lower for kw in AMBIGUOUS_KEYWORDS):
             return False
-        action_verbs = (
-            "go to", "open", "visit", "browse", "navigate", "search", "find",
-            "check", "get", "buy", "book", "fill", "download", "upload",
-            "log in", "sign in", "click", "scrape", "monitor", "track",
-            "watch", "extract", "take screenshot", "screenshot", "compare",
-            "look up", "show me", "tell me the", "what's the latest",
-            "read", "copy", "login", "submit", "register", "sign up",
-            "fill out", "complete", "verify", "test", "follow",
-        )
-        if not any(kw in task_lower for kw in action_verbs):
+        if not any(kw in task_lower for kw in ACTION_VERBS):
             return False
         return True
 
@@ -470,12 +570,15 @@ class AgentLoop:
 
         skill_context = self._find_relevant_skills(task)
         recording_name = self._get_active_recording_name()
-        browser_agent = self._get_browser_agent(recording_name=recording_name)
+        browser_agent = self._get_browser_agent(recording_name=recording_name, task=task)
 
         browser_result: BrowserResult = await browser_agent.run(
             task=task,
             skill_summaries=skill_context,
         )
+
+        if browser_agent._browser_use_llm is not None:
+            self._cached_browser_use_llm = browser_agent._browser_use_llm
 
         step.result = browser_result.text
         step.status = "completed"
@@ -538,12 +641,44 @@ class AgentLoop:
             )
         return state
 
+    def _get_tool_loop(self) -> ToolLoop:
+        registry = self._get_tool_registry()
+        return ToolLoop(llm=self.llm, registry=registry, max_rounds=self.max_steps)
+
+    async def _ensure_browser_controller(self) -> Any:
+        from sediman.browser.tools import get_default_browser_controller, set_default_browser_controller
+        ctrl = get_default_browser_controller()
+        if ctrl is not None:
+            return ctrl
+        from sediman.browser.controller import BrowserController
+        ctrl = BrowserController(headless=self.browser.headless)
+        try:
+            browser_obj = self.browser.browser
+            if browser_obj is not None:
+                try:
+                    page = await browser_obj.get_current_page()
+                    if page:
+                        ctrl._own_page = page
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        set_default_browser_controller(ctrl)
+        return ctrl
+
     async def _execute_direct_step(
         self, state: AgentState, step: PlanStep, plan: ManagerPlan
     ) -> None:
         skill_context = self._find_relevant_skills(step.description)
+
+        tool_result = await self._try_tool_loop_execution(state, step, skill_context)
+        if tool_result is not None:
+            step.result = tool_result
+            self._emit(state, f"Completed via tool loop")
+            return
+
         recording_name = self._get_active_recording_name()
-        browser_agent = self._get_browser_agent(recording_name=recording_name)
+        browser_agent = self._get_browser_agent(recording_name=recording_name, task=step.description)
 
         browser_result: BrowserResult = await browser_agent.run(
             task=step.description,
@@ -553,6 +688,81 @@ class AgentLoop:
         step.result = browser_result.text
         state.actions_taken.extend(browser_result.actions)
         self._emit(state, f"Completed {len(browser_result.actions)} browser actions")
+
+    async def _try_tool_loop_execution(
+        self, state: AgentState, step: PlanStep, skill_context: str | None,
+    ) -> str | None:
+        try:
+            await self._ensure_browser_controller()
+        except Exception as e:
+            logger.debug("tool_loop_browser_ctrl_failed", error=str(e))
+            return None
+
+        registry = self._get_tool_registry()
+        if not registry.has_tool("browser_navigate"):
+            try:
+                from sediman.browser.tools import register_browser_tools
+                register_browser_tools(registry)
+            except Exception as e:
+                logger.debug("tool_loop_register_browser_failed", error=str(e))
+                return None
+
+        tool_loop = ToolLoop(llm=self.llm, registry=registry, max_rounds=min(8, self.max_steps), budget=self._budget)
+
+        try:
+            from sediman.agent.prompts.builder import PromptBuilder
+            prompt_builder = PromptBuilder(flash_mode=self.flash_mode)
+            system_prompt = prompt_builder.build_system_prompt(
+                task=step.description,
+                skill_summaries=skill_context,
+                memory_context=self._cached_memory_context,
+            )
+        except Exception:
+            system_parts = [
+                "You are Sediman, an autonomous browser automation agent.",
+                "Use browser tools to complete the task step by step.",
+                "Always start with browser_navigate, then browser_snapshot to see the page.",
+                "Use browser_click/browser_type to interact with elements by their ref_id.",
+                "After completing the task, respond with a summary of what you did and found.",
+            ]
+            if skill_context:
+                system_parts.append(f"\nRelevant skills:\n{skill_context}")
+            system_prompt = "\n".join(system_parts)
+
+        context_parts = []
+        if self._conversation:
+            for msg in self._conversation[-6:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")[:200]
+                context_parts.append(f"{role}: {content}")
+        if state.observations:
+            for obs in state.observations[-3:]:
+                context_parts.append(f"Previous observation: {obs.content[:200]}")
+
+        user_content = step.description
+        if context_parts:
+            user_content = (
+                f"Context:\n" + "\n".join(context_parts)
+                + f"\n\nCurrent task: {step.description}"
+            )
+
+        messages = [
+            {"role": "user", "content": user_content},
+        ]
+
+        def _on_tool_call(name: str, args: dict[str, Any]) -> None:
+            self._emit(state, f"Tool: {name}", detail=str(args)[:100])
+
+        try:
+            response = await tool_loop.run(messages=messages, system=system_prompt, on_tool_call=_on_tool_call)
+            result = response.text or ""
+            if not result or len(result.strip()) < 20:
+                return None
+            state.actions_taken.append({"action": "tool_loop", "task": step.description[:100]})
+            return result
+        except Exception as e:
+            logger.warning("tool_loop_execution_failed", error=str(e))
+            return None
 
     async def _execute_delegate_step(self, state: AgentState, step: PlanStep) -> None:
         try:
@@ -664,14 +874,18 @@ class AgentLoop:
 
         if skill_data:
             try:
-                result = await execute_skill(skill_data, self.browser, self.llm, engine=engine)
+                skill_args = self._extract_skill_arguments(skill_data, state.current_task or "")
+                result = await execute_skill(
+                    skill_data, self.browser, self.llm,
+                    engine=engine, arguments=skill_args,
+                )
                 step.result = result
                 engine.record_usage(skill_name)
             except Exception as e:
                 step.result = f"Skill execution failed: {e}"
         else:
             recording_name = self._get_active_recording_name()
-            browser_agent = self._get_browser_agent(recording_name=recording_name)
+            browser_agent = self._get_browser_agent(recording_name=recording_name, task=step.description)
             browser_result = await browser_agent.run(task=step.description)
             step.result = browser_result.text
             state.actions_taken.extend(browser_result.actions)
@@ -707,6 +921,16 @@ class AgentLoop:
         self, state: AgentState, step: PlanStep, observation: Observation
     ) -> Reflection | None:
         from sediman.agent.guardrails import AuditLog
+
+        if len(state.plan_steps) == 1 and observation.success and not state.errors:
+            AuditLog.get().record("reflection", "single_step_fast_path", "single-step success", step=step.id)
+            return Reflection(
+                task_complete=True,
+                confidence=0.9,
+                reasoning="Single-step plan completed successfully.",
+                should_retry=False,
+                should_replan=False,
+            )
 
         if self._skip_reflection_on_success:
             has_done_action = any(
@@ -1080,15 +1304,20 @@ class AgentLoop:
 
     async def _run_background_post_task(self, state: AgentState, plan: ManagerPlan, task: str) -> None:
         try:
-            await self._save_session(task, state.result, state.actions_taken)
+            async def _save_session_and_trajectory() -> None:
+                await self._save_session(task, state.result, state.actions_taken)
+                await self._save_trajectory(state, task)
 
-            try:
-                from sediman.agent.recording_manager import RecordingManager
-                mgr = RecordingManager.get_instance()
-                if mgr.is_recording():
-                    await mgr.drain_active_events()
-            except Exception:
-                pass
+            async def _drain_recording() -> None:
+                try:
+                    from sediman.agent.recording_manager import RecordingManager
+                    mgr = RecordingManager.get_instance()
+                    if mgr.is_recording():
+                        await mgr.drain_active_events()
+                except Exception:
+                    pass
+
+            await asyncio.gather(_save_session_and_trajectory(), _drain_recording())
 
             all_actions = state.actions_taken
 
@@ -1122,11 +1351,6 @@ class AgentLoop:
                         self._persist_skill_counter()
                 finally:
                     self._pending_review = False
-
-            try:
-                await self._save_trajectory(state, task)
-            except Exception as e:
-                logger.warning("trajectory_save_failed", error=str(e))
 
             if plan.memory:
                 await self._memory.handle_tool_call("memory", {
@@ -1258,12 +1482,38 @@ Current task: {task}
 
 Note: Continue from where we left off. Remember what was discussed above."""
 
+    @staticmethod
+    def _extract_skill_arguments(skill: dict[str, Any], task: str) -> dict[str, str]:
+        args: dict[str, str] = {}
+        skill_name = skill.get("name", "")
+        task_lower = task.lower()
+        if skill_name.lower() in task_lower:
+            prefix = task_lower.split(skill_name.lower())[-1].strip()
+            args["ARGUMENTS"] = prefix
+            args["0"] = prefix
+        else:
+            args["ARGUMENTS"] = task
+            args["0"] = task
+        return args
+
     def _find_relevant_skills(self, task: str) -> str | None:
-        # Cache skill summaries per session; invalidate when a new skill is recorded
         if self._cached_skill_summaries is not None:
             return self._cached_skill_summaries
         engine = self._get_engine()
-        self._cached_skill_summaries = engine.get_skill_summaries() or None
+        all_skills = engine.list_skills()
+        visible = []
+        for s in all_skills:
+            if s.get("disable_model_invocation"):
+                continue
+            if s.get("paths") and not _matches_skill_paths(s.get("paths", [])):
+                continue
+            visible.append(s)
+        if not visible:
+            return None
+        lines = []
+        for s in visible:
+            lines.append(f"- {s['name']}: {s.get('description', '')[:120]}")
+        self._cached_skill_summaries = "\n".join(lines)
         return self._cached_skill_summaries
 
     async def _save_session(self, task: str, result: str, actions: list[dict[str, Any]]) -> None:
@@ -1309,3 +1559,30 @@ Note: Continue from where we left off. Remember what was discussed above."""
             return TrajectoryDB()
         except Exception:
             return None
+
+    async def _save_trajectory(self, state: AgentState, task: str) -> None:
+        db = self._get_trajectory_db()
+        if db is None:
+            return
+        try:
+            from sediman.memory.trajectories import Trajectory, TrajectoryStep
+            import time as _time
+
+            steps = []
+            for a in state.actions_taken:
+                steps.append(TrajectoryStep(
+                    action=json.dumps(a, default=str)[:500],
+                ))
+
+            traj = Trajectory(
+                task=task,
+                steps=steps,
+                result=state.result[:4000] if state.result else None,
+                success=not self._looks_like_error(state.result) if state.result else False,
+                skill_name=state.skill_created,
+                metadata={"iterations": state.iteration, "errors": len(state.errors)},
+            )
+            await db.save(traj)
+            logger.debug("trajectory_saved", id=traj.id, steps=len(steps))
+        except Exception as e:
+            logger.debug("trajectory_save_inner_failed", error=str(e))

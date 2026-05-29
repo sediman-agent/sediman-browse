@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 
 from sediman.skills.engine import SkillEngine
@@ -12,8 +10,7 @@ from sediman.skills.engine import SkillEngine
 @pytest.fixture
 def engine(tmp_sediman_dir: Path):
     skills_dir = tmp_sediman_dir / "skills"
-    with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
-        yield SkillEngine(skills_dir=skills_dir)
+    yield SkillEngine(skills_dir=skills_dir)
 
 
 class TestSkillEngineCreate:

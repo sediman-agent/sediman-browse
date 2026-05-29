@@ -1,27 +1,4 @@
 import { callPython, callPythonStreaming } from "./proxy.js";
-import {
-  handleSkillsList,
-  handleSkillsGet,
-  handleSkillsDelete,
-} from "../../sdk/src/modules/skills.js";
-import {
-  handleHubBrowse,
-  handleHubSearch,
-  handleHubInfo,
-  handleHubInstall,
-} from "../../sdk/src/modules/hub.js";
-import {
-  handleScheduleList,
-  handleScheduleAdd,
-  handleScheduleRemove,
-} from "../../sdk/src/modules/schedule.js";
-import {
-  handleMemoryGet,
-  handleMemoryAdd,
-} from "../../sdk/src/modules/memory.js";
-import {
-  handleSessionsList,
-} from "../../sdk/src/modules/sessions.js";
 
 export type NotifyFn = (method: string, params: Record<string, unknown>) => void;
 
@@ -30,37 +7,16 @@ export type RpcHandler = (
   notify?: NotifyFn,
 ) => Promise<unknown>;
 
-// ── In-memory state (replaces Python shared globals) ─────────────
-let currentProvider = process.env.SEDIMAN_PROVIDER || "openai";
-let currentModel = process.env.SEDIMAN_MODEL || "";
-let currentBaseUrl = process.env.SEDIMAN_BASE_URL || "";
 let terminalAllowed = false;
 
-const PROVIDERS: Array<{ name: string; default_model: string; default_base_url: string | null }> = [
-  { name: "openai", default_model: "gpt-4o", default_base_url: null },
-  { name: "ollama", default_model: "qwen3", default_base_url: "http://localhost:11434/v1" },
-];
-
 export function resetState(): void {
-  currentProvider = process.env.SEDIMAN_PROVIDER || "openai";
-  currentModel = process.env.SEDIMAN_MODEL || "";
-  currentBaseUrl = process.env.SEDIMAN_BASE_URL || "";
   terminalAllowed = false;
 }
 
 export const handlers: Record<string, RpcHandler> = {
 
-  // ── System (native TS) ──────────────────────────────────────────
-  "system.status": async () => ({
-    browser_open: false,
-    model: currentModel || process.env.SEDIMAN_MODEL || null,
-    provider: currentProvider || process.env.SEDIMAN_PROVIDER || "openai",
-    conversation_messages: 0,
-    current_task: null,
-    scheduler: { active_jobs: 0, total_jobs: 0 },
-    last_result: null,
-    queue_size: 0,
-  }),
+  // ── System ─────────────────────────────────────────────────────
+  "system.status": async () => callPython("system.status", {}),
 
   "system.screenshot": async () => callPython("system.screenshot", {}),
 
@@ -120,48 +76,50 @@ export const handlers: Record<string, RpcHandler> = {
 
   "agent.cancel": async () => callPython("agent.cancel", {}),
 
-  // ── Skills ────────────────────────────────────────────────────
-  "skills.list": async () => handleSkillsList(),
-  "skills.get": async (params) => handleSkillsGet({ name: String(params.name || "") }),
+  // ── Skills (proxied to Python) ───────────────────────────────────
+  "skills.list": async () => callPython("skills.list", {}),
+  "skills.get": async (params) => callPython("skills.get", { name: String(params.name || "") }),
   "skills.run": async (params) => callPython("skills.run", params),
-  "skills.delete": async (params) => handleSkillsDelete({ name: String(params.name || "") }),
+  "skills.create": async (params) => callPython("skills.create", params),
+  "skills.delete": async (params) => callPython("skills.delete", { name: String(params.name || "") }),
 
-  // ── Hub ───────────────────────────────────────────────────────
-  "hub.browse": async (params) => handleHubBrowse({ category: params.category ? String(params.category) : undefined }),
-  "hub.search": async (params) => handleHubSearch({ query: String(params.query || "") }),
-  "hub.info": async (params) => handleHubInfo({ name: String(params.name || "") }),
-  "hub.install": async (params) => handleHubInstall({ name: String(params.name || ""), force: Boolean(params.force) }),
+  // ── Hub (proxied to Python) ──────────────────────────────────────
+  "hub.browse": async (params) => callPython("hub.browse", { category: params.category ? String(params.category) : undefined }),
+  "hub.search": async (params) => callPython("hub.search", { query: String(params.query || "") }),
+  "hub.info": async (params) => callPython("hub.info", { name: String(params.name || "") }),
+  "hub.install": async (params) => callPython("hub.install", { name: String(params.name || ""), force: Boolean(params.force) }),
+  "hub.install_github": async (params) => callPython("hub.install_github", { ref: String(params.ref || ""), force: Boolean(params.force) }),
+  "hub.check_update": async (params) => callPython("hub.check_update", { name: String(params.name || "") }),
+  "hub.update_skill": async (params) => callPython("hub.update_skill", { name: String(params.name || "") }),
+  "hub.remove": async (params) => callPython("hub.remove", { name: String(params.name || "") }),
+  "hub.get_lock_info": async (params) => callPython("hub.get_lock_info", { name: String(params.name || "") }),
 
-  // ── Schedule ──────────────────────────────────────────────────
-  "schedule.list": async () => handleScheduleList(),
-  "schedule.add": async (params) => handleScheduleAdd({
+  // ── Memory (proxied to Python) ────────────────────────────────────
+  "memory.get": async () => callPython("memory.get", {}),
+  "memory.add": async (params) => callPython("memory.add", { target: String(params.target || "memory"), content: String(params.content || "") }),
+  "memory.replace": async (params) => callPython("memory.replace", params),
+  "memory.remove": async (params) => callPython("memory.remove", params),
+  "memory.search": async (params) => callPython("memory.search", params),
+  "memory.changelog": async (params) => callPython("memory.changelog", params),
+
+  // ── Sessions (proxied to Python for SQLite backend) ──────────────
+  "sessions.list": async () => callPython("sessions.list", {}),
+  "sessions.search": async (params) => callPython("sessions.search", params),
+  "sessions.save": async (params) => callPython("sessions.save", params),
+  "sessions.get": async (params) => callPython("sessions.get", params),
+
+  // ── Schedule (proxied to Python) ─────────────────────────────────
+  "schedule.list": async () => callPython("schedule.list", {}),
+  "schedule.add": async (params) => callPython("schedule.add", {
     cron: String(params.cron || ""),
     task: String(params.task || ""),
     skill: params.skill ? String(params.skill) : undefined,
   }),
-  "schedule.remove": async (params) => handleScheduleRemove({ job_id: String(params.job_id || "") }),
+  "schedule.remove": async (params) => callPython("schedule.remove", { job_id: String(params.job_id || "") }),
 
-  // ── Memory ────────────────────────────────────────────────────
-  "memory.get": async () => handleMemoryGet(),
-  "memory.add": async (params) => handleMemoryAdd({
-    target: String(params.target || "memory"),
-    content: String(params.content || ""),
-  }),
-
-  // ── Sessions ──────────────────────────────────────────────────
-  "sessions.list": async () => handleSessionsList(),
-
-  // ── Model (native TS) ───────────────────────────────────────────
-  "model.switch": async (params) => {
-    const provider = String(params.provider || "").trim();
-    if (!provider) throw new Error("provider is required");
-    currentProvider = provider;
-    if (params.model) currentModel = String(params.model).trim();
-    if (params.base_url) currentBaseUrl = String(params.base_url).trim();
-    return { provider: currentProvider, model: currentModel || null };
-  },
-
-  "model.list_providers": async () => ({ providers: PROVIDERS }),
+  // ── Model (proxied to Python) ──────────────────────────────────
+  "model.switch": async (params) => callPython("model.switch", params),
+  "model.list_providers": async () => callPython("model.list_providers", {}),
 
   // ── Terminal (native TS) ────────────────────────────────────────
   "terminal.set": async (params) => {
@@ -173,6 +131,19 @@ export const handlers: Record<string, RpcHandler> = {
   "terminal.status": async () => {
     const env = process.env.SEDIMAN_TERMINAL_ALLOWED;
     return { allowed: env ? env === "1" || env === "true" : terminalAllowed };
+  },
+
+  // ── Soul (native TS) ────────────────────────────────────────────
+  "system.set_soul": async (params) => {
+    const { loadSoul, saveSoul, resetSoul } = await import("../../sdk/src/soul.js");
+    const text = String(params.text || "");
+    const reset = Boolean(params.reset);
+    if (reset) {
+      resetSoul();
+    } else if (text) {
+      saveSoul(text);
+    }
+    return { content: reset ? loadSoul() : (text || loadSoul()) };
   },
 
   // ── Recording (proxied to Python) ───────────────────────────────

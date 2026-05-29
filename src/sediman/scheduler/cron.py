@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 import structlog
 
@@ -22,6 +24,33 @@ _CRON_FIELD_RE = re.compile(r"^[\d*/,-]+$")
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{1,12}$")
 _list_jobs_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 30.0
+
+_SUPRESSED_LOGGERS = (
+    "browser_use", "Agent", "service", "httpx", "httpcore",
+    "openai", "browser_use.agent", "browser_use.browser",
+    "browser_use.tools", "browser_use.controller", "bubus",
+    "sediman", "sediman.agent.loop", "sediman.browser.session",
+    "sediman.scheduler.cron", "sediman.memory.sessions",
+)
+
+
+@contextmanager
+def _suppress_logging() -> Generator[None, None, None]:
+    """Temporarily suppress noisy loggers without mutating global config.
+
+    Uses per-logger level overrides so we never touch the root logger
+    or structlog's global configuration.
+    """
+    saved: dict[str, int] = {}
+    for _name in _SUPRESSED_LOGGERS:
+        lg = logging.getLogger(_name)
+        saved[_name] = lg.level
+        lg.setLevel(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        for _name, level in saved.items():
+            logging.getLogger(_name).setLevel(level)
 
 
 def validate_cron_expr(expr: str) -> bool:
@@ -190,67 +219,93 @@ class CronManager:
         return entries[:limit]
 
 
+class _CronResources:
+    """Shared resources reused across cron job executions in a single process."""
+
+    def __init__(self) -> None:
+        self.llm: Any = None
+        self.browser: Any = None
+        self._initialized = False
+        self._lock = asyncio.Lock()
+
+    async def ensure_initialized(self) -> None:
+        async with self._lock:
+            if self._initialized:
+                return
+            from sediman.browser.session import BrowserSession
+            from sediman.llm.provider import create_provider
+            from sediman.store.db import init_db
+
+            await init_db()
+            self.llm = create_provider(provider="openai")
+            self.browser = BrowserSession(
+                headless=True,
+                stealth=True,
+                user_data_dir=str(Path.home() / ".sediman" / "browser-profile-cron"),
+            )
+            await self.browser.start()
+            self._initialized = True
+
+    async def shutdown(self) -> None:
+        if self.browser:
+            await self.browser.stop()
+            self.browser = None
+        self._initialized = False
+
+
+_shared_resources: _CronResources | None = None
+
+
+def _get_shared_resources() -> _CronResources:
+    global _shared_resources
+    if _shared_resources is None:
+        _shared_resources = _CronResources()
+    return _shared_resources
+
+
 async def execute_cron_job(job: dict[str, Any]) -> str:
     """Execute a scheduled cron job."""
-    import logging
-    import io
-
-    logging.getLogger().setLevel(logging.CRITICAL)
-    for _name in (
-        "browser_use", "Agent", "service", "httpx", "httpcore",
-        "openai", "browser_use.agent", "browser_use.browser",
-        "browser_use.tools", "browser_use.controller", "bubus",
-        "sediman", "sediman.agent.loop", "sediman.browser.session",
-        "sediman.scheduler.cron", "sediman.memory.sessions",
-    ):
-        logging.getLogger(_name).setLevel(logging.CRITICAL)
-        logging.getLogger(_name).propagate = False
-
-    try:
-        import structlog
-        structlog.configure(
-            processors=[lambda _, __, ___: None],
-            wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL),
-            logger_factory=structlog.WriteLoggerFactory(io.StringIO()),
-        )
-    except Exception:
-        pass
-
-    try:
-        return await _execute_cron_job_inner(job)
-    except Exception as exc:
-        return f"error: {exc}"
-    finally:
+    with _suppress_logging():
         try:
-            structlog.reset_defaults()
-        except Exception:
-            pass
+            return await _execute_cron_job_inner(job)
+        except Exception as exc:
+            return f"error: {exc}"
 
 
 async def _execute_cron_job_inner(job: dict[str, Any]) -> str:
     from sediman.agent.loop import AgentLoop
-    from sediman.browser.session import BrowserSession
-    from sediman.llm.provider import create_provider
-    from sediman.store.db import init_db
     from sediman.skills.executor import execute_skill as run_skill
     from sediman.skills.engine import SkillEngine
 
-    await init_db()
+    job_provider = job.get("provider", "openai")
+    job_model = job.get("model")
+    job_base_url = job.get("base_url")
 
-    llm = create_provider(
-        provider=job.get("provider", "openai"),
-        model=job.get("model"),
-        base_url=job.get("base_url"),
-    )
-    browser = BrowserSession(
-        headless=True,
-        stealth=True,
-        user_data_dir=str(Path.home() / ".sediman" / "browser-profile-cron"),
-    )
+    if job_provider != "openai" or job_model or job_base_url:
+        from sediman.llm.provider import create_provider
+        from sediman.store.db import init_db
 
-    try:
+        await init_db()
+        llm = create_provider(provider=job_provider, model=job_model, base_url=job_base_url)
+        browser = None
+    else:
+        resources = _get_shared_resources()
+        await resources.ensure_initialized()
+        llm = resources.llm
+        browser = resources.browser
+
+    from sediman.browser.session import BrowserSession
+
+    owns_browser = browser is None
+    if owns_browser:
+        browser = BrowserSession(
+            headless=True,
+            stealth=True,
+            user_data_dir=str(Path.home() / ".sediman" / "browser-profile-cron"),
+        )
         await browser.start()
 
+    try:
         if job.get("skill_name"):
             engine = SkillEngine()
             skill_data = engine.read(job["skill_name"])
@@ -263,11 +318,9 @@ async def _execute_cron_job_inner(job: dict[str, Any]) -> str:
             agent_result = await agent.run(job["task"])
             result = agent_result.result
 
-        # Update job with result
         cron = CronManager()
         cron.update_job_result(job["id"], result)
 
-        # Send notification if configured
         notify = job.get("notify")
         if notify and ":" in notify:
             try:
@@ -284,51 +337,82 @@ async def _execute_cron_job_inner(job: dict[str, Any]) -> str:
         return result
 
     finally:
-        await browser.stop()
+        if owns_browser:
+            await browser.stop()
+
+
+class CronScheduler:
+    """Scheduler with hot-reload support."""
+
+    def __init__(self) -> None:
+        self._scheduler: Any = None
+        self._cron = CronManager()
+        self._running = False
+
+    def start(self) -> None:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        self._scheduler = AsyncIOScheduler()
+        self._load_jobs()
+        self._scheduler.start()
+        self._running = True
+        logger.info("scheduler_started")
+
+    def stop(self) -> None:
+        if self._scheduler:
+            self._scheduler.shutdown()
+            self._scheduler = None
+            self._running = False
+            logger.info("scheduler_stopped")
+
+    def reload(self) -> None:
+        """Hot-reload all jobs from disk without restarting the process."""
+        if not self._scheduler:
+            return
+        self._scheduler.remove_all_jobs()
+        _list_jobs_cache.pop(str(self._cron.jobs_dir), None)
+        self._load_jobs()
+        logger.info("scheduler_reloaded")
+
+    def _load_jobs(self) -> None:
+        from apscheduler.triggers.cron import CronTrigger
+
+        jobs = self._cron.list_jobs()
+        loaded = 0
+        for job in jobs:
+            if not job.get("enabled", True):
+                continue
+            parts = job["cron"].split()
+            if len(parts) != 5:
+                logger.warning("invalid_cron", job_id=job["id"], cron=job["cron"])
+                continue
+            trigger = CronTrigger(
+                minute=parts[0],
+                hour=parts[1],
+                day=parts[2],
+                month=parts[3],
+                day_of_week=parts[4],
+            )
+            self._scheduler.add_job(
+                _run_scheduled_task,
+                trigger=trigger,
+                id=job["id"],
+                args=[job],
+                replace_existing=True,
+            )
+            loaded += 1
+        logger.info("cron_jobs_loaded", total=len(jobs), loaded=loaded)
 
 
 def start_scheduler() -> None:
-    """Start the APScheduler-based cron daemon."""
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from apscheduler.triggers.cron import CronTrigger
-
-    scheduler = AsyncIOScheduler()
-    cron = CronManager()
-    jobs = cron.list_jobs()
-
-    for job in jobs:
-        if not job.get("enabled", True):
-            continue
-
-        parts = job["cron"].split()
-        if len(parts) != 5:
-            logger.warning("invalid_cron", job_id=job["id"], cron=job["cron"])
-            continue
-
-        trigger = CronTrigger(
-            minute=parts[0],
-            hour=parts[1],
-            day=parts[2],
-            month=parts[3],
-            day_of_week=parts[4],
-        )
-
-        scheduler.add_job(
-            _run_scheduled_task,
-            trigger=trigger,
-            id=job["id"],
-            args=[job],
-            replace_existing=True,
-        )
-        logger.info("cron_job_scheduled", job_id=job["id"], cron=job["cron"])
-
-    scheduler.start()
-    logger.info("scheduler_started", jobs=len(jobs))
+    """Start the cron daemon (blocking)."""
+    sched = CronScheduler()
+    sched.start()
 
     try:
         asyncio.get_event_loop().run_forever()
     except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+        sched.stop()
 
 
 async def _run_scheduled_task(job: dict[str, Any]) -> None:

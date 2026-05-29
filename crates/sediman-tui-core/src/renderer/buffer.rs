@@ -1,5 +1,9 @@
 use super::Cell;
 
+fn char_width(ch: char) -> u16 {
+    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as u16
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Rect {
     pub x: u16,
@@ -165,10 +169,17 @@ impl Rect {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CellBuffer {
     area: Rect,
     cells: Vec<Cell>,
+    dirty_rows: Vec<bool>,
+}
+
+impl PartialEq for CellBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.area == other.area && self.cells == other.cells
+    }
 }
 
 impl CellBuffer {
@@ -176,6 +187,7 @@ impl CellBuffer {
         Self {
             area: Rect::new(0, 0, 0, 0),
             cells: Vec::new(),
+            dirty_rows: Vec::new(),
         }
     }
 
@@ -185,6 +197,7 @@ impl CellBuffer {
         Self {
             area,
             cells: vec![Cell::default(); len],
+            dirty_rows: vec![false; height as usize],
         }
     }
 
@@ -200,6 +213,22 @@ impl CellBuffer {
         self.area.height
     }
 
+    fn mark_dirty(&mut self, y: u16) {
+        if (y as usize) < self.dirty_rows.len() {
+            self.dirty_rows[y as usize] = true;
+        }
+    }
+
+    pub fn clear_dirty(&mut self) {
+        for d in &mut self.dirty_rows {
+            *d = false;
+        }
+    }
+
+    pub fn is_row_dirty(&self, y: u16) -> bool {
+        self.dirty_rows.get(y as usize).copied().unwrap_or(false)
+    }
+
     fn index(&self, x: u16, y: u16) -> Option<usize> {
         if x >= self.area.width || y >= self.area.height {
             return None;
@@ -213,12 +242,14 @@ impl CellBuffer {
 
     pub fn get_mut(&mut self, x: u16, y: u16) -> Option<&mut Cell> {
         let i = self.index(x, y)?;
+        self.mark_dirty(y);
         Some(&mut self.cells[i])
     }
 
     pub fn put(&mut self, x: u16, y: u16, cell: Cell) {
         if let Some(i) = self.index(x, y) {
             self.cells[i] = cell;
+            self.mark_dirty(y);
         }
     }
 
@@ -246,11 +277,15 @@ impl CellBuffer {
         }
         self.area = new_area;
         self.cells = new_cells;
+        self.dirty_rows = vec![true; height as usize];
     }
 
     pub fn clear(&mut self) {
         for c in &mut self.cells {
             c.clear();
+        }
+        for d in &mut self.dirty_rows {
+            *d = true;
         }
     }
 
@@ -258,8 +293,11 @@ impl CellBuffer {
         let clamped = rect.clamp(self.area);
         for y in clamped.y..clamped.bottom() {
             for x in clamped.x..clamped.right() {
-                self.put(x, y, cell);
+                if let Some(i) = self.index(x, y) {
+                    self.cells[i] = cell;
+                }
             }
+            self.mark_dirty(y);
         }
     }
 
@@ -267,10 +305,11 @@ impl CellBuffer {
         let clamped = rect.clamp(self.area);
         for y in clamped.y..clamped.bottom() {
             for x in clamped.x..clamped.right() {
-                if let Some(c) = self.get_mut(x, y) {
-                    c.style = style;
+                if let Some(i) = self.index(x, y) {
+                    self.cells[i].style = style;
                 }
             }
+            self.mark_dirty(y);
         }
     }
 
@@ -278,22 +317,36 @@ impl CellBuffer {
         let clamped = rect.clamp(self.area);
         for y in clamped.y..clamped.bottom() {
             for x in clamped.x..clamped.right() {
-                if let Some(c) = self.get_mut(x, y) {
-                    c.clear();
+                if let Some(i) = self.index(x, y) {
+                    self.cells[i].clear();
                 }
             }
+            self.mark_dirty(y);
         }
     }
 
     pub fn draw_str(&mut self, x: u16, y: u16, text: &str, style: super::Style) {
         let mut cx = x;
         for ch in text.chars() {
-            if cx >= self.area.width || y >= self.area.height {
+            let w = char_width(ch);
+            if w == 0 { continue; }
+            if cx + w > self.area.width || y >= self.area.height {
                 break;
             }
-            self.put(cx, y, Cell::new(ch, style));
+            if let Some(i) = self.index(cx, y) {
+                self.cells[i] = Cell::new(ch, style);
+            }
             cx += 1;
+            for _ in 1..w {
+                if cx < self.area.width {
+                    if let Some(i) = self.index(cx, y) {
+                        self.cells[i].skip = true;
+                    }
+                }
+                cx += 1;
+            }
         }
+        self.mark_dirty(y);
     }
 
     pub fn draw_wrapped_str(&mut self, rect: Rect, text: &str, style: super::Style) {
@@ -305,19 +358,36 @@ impl CellBuffer {
                 break;
             }
             if ch == '\n' {
+                self.mark_dirty(y);
                 x = clamped.x;
                 y += 1;
                 continue;
             }
-            if x >= clamped.right() {
+            let w = char_width(ch);
+            if w == 0 { continue; }
+            if x + w > clamped.right() {
+                self.mark_dirty(y);
                 x = clamped.x;
                 y += 1;
                 if y >= clamped.bottom() {
                     break;
                 }
             }
-            self.put(x, y, Cell::new(ch, style));
+            if let Some(i) = self.index(x, y) {
+                self.cells[i] = Cell::new(ch, style);
+            }
             x += 1;
+            for _ in 1..w {
+                if x < clamped.right() {
+                    if let Some(i) = self.index(x, y) {
+                        self.cells[i].skip = true;
+                    }
+                }
+                x += 1;
+            }
+        }
+        if y < clamped.bottom() {
+            self.mark_dirty(y);
         }
     }
 
@@ -325,16 +395,19 @@ impl CellBuffer {
         let dst_clamped = dst_rect.clamp(self.area);
         let w = dst_clamped.width.min(src_rect.width);
         let h = dst_clamped.height.min(src_rect.height);
-        for dy in 0..h {
-            for dx in 0..w {
-                let sx = src_rect.x + dx;
-                let sy = src_rect.y + dy;
-                let dx = dst_clamped.x + dx;
-                let dy = dst_clamped.y + dy;
+        for row in 0..h {
+            for col in 0..w {
+                let sx = src_rect.x + col;
+                let sy = src_rect.y + row;
+                let dst_x = dst_clamped.x + col;
+                let dst_y = dst_clamped.y + row;
                 if let Some(cell) = src.get(sx, sy) {
-                    self.put(dx, dy, *cell);
+                    if let Some(i) = self.index(dst_x, dst_y) {
+                        self.cells[i] = *cell;
+                    }
                 }
             }
+            self.mark_dirty(dst_clamped.y + row);
         }
     }
 
@@ -712,5 +785,153 @@ mod tests {
         buf.put(0, 0, Cell::new('x', Style::new()));
         let clone = buf.clone();
         assert_eq!(clone.get(0, 0).unwrap().ch, 'x');
+    }
+
+    #[test]
+    fn test_dirty_after_put() {
+        let mut buf = CellBuffer::new(5, 5);
+        assert!(!buf.is_row_dirty(2));
+        buf.put(3, 2, Cell::new('a', Style::new()));
+        assert!(buf.is_row_dirty(2));
+        assert!(!buf.is_row_dirty(0));
+        assert!(!buf.is_row_dirty(4));
+    }
+
+    #[test]
+    fn test_dirty_after_draw_str() {
+        let mut buf = CellBuffer::new(20, 5);
+        buf.draw_str(0, 3, "hello", Style::new());
+        assert!(buf.is_row_dirty(3));
+        assert!(!buf.is_row_dirty(0));
+        assert!(!buf.is_row_dirty(4));
+    }
+
+    #[test]
+    fn test_dirty_after_fill() {
+        let mut buf = CellBuffer::new(10, 10);
+        buf.fill(Rect::new(0, 3, 10, 3), Cell::new('X', Style::new()));
+        assert!(!buf.is_row_dirty(0));
+        assert!(!buf.is_row_dirty(2));
+        assert!(buf.is_row_dirty(3));
+        assert!(buf.is_row_dirty(4));
+        assert!(buf.is_row_dirty(5));
+        assert!(!buf.is_row_dirty(6));
+    }
+
+    #[test]
+    fn test_dirty_after_clear() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.clear_dirty();
+        assert!(!buf.is_row_dirty(0));
+        buf.clear();
+        for y in 0..5 {
+            assert!(buf.is_row_dirty(y));
+        }
+    }
+
+    #[test]
+    fn test_clear_dirty_resets_all() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.fill(Rect::new(0, 0, 5, 5), Cell::new('X', Style::new()));
+        assert!(buf.is_row_dirty(0));
+        buf.clear_dirty();
+        for y in 0..5 {
+            assert!(!buf.is_row_dirty(y));
+        }
+    }
+
+    #[test]
+    fn test_dirty_after_resize() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.clear_dirty();
+        assert!(!buf.is_row_dirty(0));
+        buf.resize(10, 10);
+        for y in 0..10 {
+            assert!(buf.is_row_dirty(y));
+        }
+    }
+
+    #[test]
+    fn test_partial_eq_ignores_dirty() {
+        let mut a = CellBuffer::new(5, 5);
+        let mut b = CellBuffer::new(5, 5);
+        a.put(0, 0, Cell::new('x', Style::new()));
+        b.put(0, 0, Cell::new('x', Style::new()));
+        a.clear_dirty();
+        assert!(a.is_row_dirty(0) == false);
+        assert!(b.is_row_dirty(0) == true);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_dirty_after_blit() {
+        let mut src = CellBuffer::new(5, 5);
+        src.put(0, 0, Cell::new('A', Style::new()));
+        let mut dst = CellBuffer::new(10, 10);
+        dst.clear_dirty();
+        dst.blit(Rect::new(5, 5, 2, 2), &src, Rect::new(0, 0, 2, 2));
+        assert!(!dst.is_row_dirty(4));
+        assert!(dst.is_row_dirty(5));
+        assert!(dst.is_row_dirty(6));
+        assert!(!dst.is_row_dirty(7));
+    }
+
+    #[test]
+    fn test_draw_str_wide_char_clip() {
+        let mut buf = CellBuffer::new(5, 1);
+        buf.draw_str(3, 0, "\u{4e00}", Style::new());
+        assert_eq!(buf.get(3, 0).unwrap().ch, '\u{4e00}');
+        assert!(buf.get(3, 0).unwrap().skip == false);
+    }
+
+    #[test]
+    fn test_draw_wrapped_str_exact_boundary() {
+        let mut buf = CellBuffer::new(5, 3);
+        buf.draw_wrapped_str(Rect::new(0, 0, 5, 3), "abcde", Style::new());
+        assert_eq!(buf.get(4, 0).unwrap().ch, 'e');
+    }
+
+    #[test]
+    fn test_draw_wrapped_str_newline() {
+        let mut buf = CellBuffer::new(10, 3);
+        buf.draw_wrapped_str(Rect::new(0, 0, 10, 3), "ab\ncd", Style::new());
+        assert_eq!(buf.get(0, 0).unwrap().ch, 'a');
+        assert_eq!(buf.get(0, 1).unwrap().ch, 'c');
+    }
+
+    #[test]
+    fn test_resize_to_zero() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.put(0, 0, Cell::new('x', Style::new()));
+        buf.resize(0, 0);
+        assert_eq!(buf.width(), 0);
+        assert_eq!(buf.height(), 0);
+    }
+
+    #[test]
+    fn test_fill_style_outside_buffer() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.fill_style(Rect::new(10, 10, 3, 3), Style::new().bg(Color::RED));
+        assert_eq!(buf.get(0, 0).unwrap().style.bg, None);
+    }
+
+    #[test]
+    fn test_clear_rect() {
+        let mut buf = CellBuffer::new(5, 5);
+        buf.fill(Rect::new(0, 0, 5, 5), Cell::new('X', Style::new()));
+        buf.clear_rect(Rect::new(1, 1, 3, 3));
+        assert_eq!(buf.get(0, 0).unwrap().ch, 'X');
+        assert!(buf.get(1, 1).unwrap().is_empty());
+        assert!(buf.get(3, 3).unwrap().is_empty());
+        assert_eq!(buf.get(4, 4).unwrap().ch, 'X');
+    }
+
+    #[test]
+    fn test_draw_wrapped_str_wide_char_wrap() {
+        let mut buf = CellBuffer::new(3, 3);
+        buf.draw_wrapped_str(Rect::new(0, 0, 3, 3), "ab\u{4e00}", Style::new());
+        assert_eq!(buf.get(0, 0).unwrap().ch, 'a');
+        assert_eq!(buf.get(1, 0).unwrap().ch, 'b');
+        assert_eq!(buf.get(0, 1).unwrap().ch, '\u{4e00}');
     }
 }

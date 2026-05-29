@@ -182,4 +182,28 @@ mod tests {
         let b = a.clone();
         assert_eq!(a, b);
     }
+
+    #[test]
+    fn test_cell_null_char_not_empty() {
+        let c = Cell::new('\0', Style::new());
+        assert!(!c.is_empty());
+    }
+
+    #[test]
+    fn test_cell_blend_style_both() {
+        let c = Cell::new('x', Style::new().fg(Color::WHITE));
+        let blended = c.blend_style(Style::new().bg(Color::BLUE).add_modifier(TextAttributes::bold()));
+        assert_eq!(blended.style.fg, Some(Color::WHITE));
+        assert_eq!(blended.style.bg, Some(Color::BLUE));
+        assert!(blended.style.attrs.bold);
+    }
+
+    #[test]
+    fn test_cell_equality_different_skip() {
+        let mut a = Cell::new('x', Style::new());
+        let mut b = Cell::new('x', Style::new());
+        a.skip = true;
+        b.skip = false;
+        assert_ne!(a, b);
+    }
 }

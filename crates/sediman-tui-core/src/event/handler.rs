@@ -43,6 +43,9 @@ impl EventLoop {
                         Event::Resize(w, h) => {
                             Some(AppEvent::Resize(w, h))
                         }
+                        Event::Paste(text) => {
+                            Some(AppEvent::Paste(text))
+                        }
                         _ => None,
                     }
                 }

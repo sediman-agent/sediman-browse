@@ -6,8 +6,8 @@ something goes wrong.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,19 +66,17 @@ class CheckpointManager:
 
         try:
             name = f"pre-{tool_name}"
-            result = subprocess.run(
-                [self._cli, "checkpoint", "create", target_dir, f"--name={name}"],
-                capture_output=True,
-                text=True,
-                timeout=15,
+            proc = await asyncio.create_subprocess_exec(
+                self._cli, "checkpoint", "create", target_dir, f"--name={name}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode != 0:
-                logger.warning("checkpoint_create_failed", stderr=result.stderr[:200])
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            if proc.returncode != 0:
+                logger.warning("checkpoint_create_failed", stderr=stderr.decode()[:200])
                 return None
 
-            # Parse checkpoint ID from output:
-            # "Created checkpoint 178004... (pre-write_file)\n  Path: ..."
-            lines = result.stdout.strip().split("\n")
+            lines = stdout.decode().strip().split("\n")
             cp_id = self._extract_id(lines[0])
             if cp_id:
                 info = CheckpointInfo(
@@ -122,17 +120,17 @@ class CheckpointManager:
     async def revert(self, checkpoint_id: str, target_dir: str) -> bool:
         """Revert a directory to a checkpoint."""
         try:
-            result = subprocess.run(
-                [self._cli, "checkpoint", "revert", target_dir, f"--id={checkpoint_id}"],
-                capture_output=True,
-                text=True,
-                timeout=15,
+            proc = await asyncio.create_subprocess_exec(
+                self._cli, "checkpoint", "revert", target_dir, f"--id={checkpoint_id}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            success = result.returncode == 0
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            success = proc.returncode == 0
             if success:
                 logger.info("checkpoint_reverted", id=checkpoint_id, dir=target_dir)
             else:
-                logger.warning("checkpoint_revert_failed", stderr=result.stderr[:200])
+                logger.warning("checkpoint_revert_failed", stderr=stderr.decode()[:200])
             return success
         except Exception as e:
             logger.debug("checkpoint_revert_exception", error=str(e))

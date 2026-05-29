@@ -365,4 +365,57 @@ mod tests {
         assert_eq!(b, 255);
         assert_eq!(a, 128);
     }
+
+    #[test]
+    fn test_from_hex_mixed_case() {
+        let c = Color::from_hex("#FFff00");
+        assert!(c.is_some());
+    }
+
+    #[test]
+    fn test_from_hex_8_digits() {
+        let c = Color::from_hex("#ff0000ff");
+        assert!(c.is_none());
+    }
+
+    #[test]
+    fn test_from_hex_whitespace() {
+        let c = Color::from_hex("  #ff0000  ");
+        assert!(c.is_none());
+    }
+
+    #[test]
+    fn test_ansi_color_cube_spot_check() {
+        let c = Color::Named(196);
+        let (r, g, b) = c.to_rgb();
+        assert_eq!(r, 255);
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_ansi_grayscale_spot_check() {
+        let c = Color::Named(240);
+        let (r, g, b) = c.to_rgb();
+        assert_eq!(r, g);
+        assert_eq!(g, b);
+    }
+
+    #[test]
+    fn test_rgba_blend_alpha_half_bg() {
+        let fg = Rgba::new(1.0, 0.0, 0.0, 0.5);
+        let bg = Rgba::new(0.0, 0.0, 1.0, 0.5);
+        let result = fg.blend_over(bg);
+        assert!(result.r > 0.0 && result.r < 1.0);
+        assert!(result.b > 0.0 && result.b < 1.0);
+    }
+
+    #[test]
+    fn test_color_to_rgb_rgba_with_alpha() {
+        let c = Color::Rgba(Rgba::new(0.5, 0.5, 0.5, 0.3));
+        let (r, g, b) = c.to_rgb();
+        assert_eq!(r, 128);
+        assert_eq!(g, 128);
+        assert_eq!(b, 128);
+    }
 }

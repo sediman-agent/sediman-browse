@@ -27,6 +27,7 @@ class ManagerPlan:
     skill_to_use: str | None = None
     response: str | None = None
     use_subagent: str | None = None
+    milestones: list[str] | None = None
 
 
 class ManagerAgent:
@@ -41,8 +42,10 @@ class ManagerAgent:
         conversation: list[dict[str, str]] | None = None,
         previous_failure: str | None = None,
         on_streaming_token: Callable[[str], None] | None = None,
+        regex_plan: Any | None = None,
     ) -> ManagerPlan:
-        regex_plan = self._regex_planner.plan(task)
+        if regex_plan is None:
+            regex_plan = self._regex_planner.plan(task)
 
         if regex_plan.schedule and not conversation:
             return ManagerPlan(
@@ -78,22 +81,66 @@ class ManagerAgent:
                 schedule=regex_plan.schedule,
             )
 
+        # Fallback: if no action verbs detected, treat as conversational
+        from sediman.agent.locales import ACTION_VERBS
+        task_lower = task.lower()
+        if not any(kw in task_lower for kw in ACTION_VERBS):
+            return ManagerPlan(
+                browser_task="",
+                strategy=Strategy.CONVERSATIONAL,
+                response="I'd be happy to help! Could you give me a browser task to work on?",
+            )
+
         return ManagerPlan(browser_task=task)
 
     async def decompose(
         self,
         task: str,
         max_subtasks: int = 5,
+        beam_width: int = 2,
+    ) -> list[PlanStep]:
+        import asyncio
+
+        candidates = await asyncio.gather(
+            *[self._single_decompose(task, max_subtasks, seed=i) for i in range(beam_width)],
+            return_exceptions=True,
+        )
+
+        valid = []
+        for c in candidates:
+            if isinstance(c, list) and c:
+                valid.append(c)
+
+        if not valid:
+            return [PlanStep(id=0, description=task, strategy=Strategy.DIRECT)]
+
+        if len(valid) == 1:
+            return valid[0]
+
+        scored = []
+        for steps in valid:
+            score = self._score_decomposition(steps, task)
+            scored.append((score, steps))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1]
+
+    async def _single_decompose(
+        self, task: str, max_subtasks: int, seed: int = 0,
     ) -> list[PlanStep]:
         from sediman.agent.prompts.builder import _load_template
 
         system_prompt = _load_template("manager_system.md")
+
+        seed_hint = ""
+        if seed > 0:
+            seed_hint = " Provide an alternative decomposition approach.\n"
 
         decompose_prompt = (
             system_prompt
             + "\n\n## Task Decomposition\n\n"
             "Break this task into independent subtasks that can run in parallel.\n"
             "Each subtask should be a complete, self-contained browser task.\n"
+            f"{seed_hint}"
             f"Maximum {max_subtasks} subtasks.\n\n"
             'Respond with JSON: {"subtasks": ["task1", "task2", ...]}'
         )
@@ -121,7 +168,31 @@ class ManagerAgent:
         except Exception as e:
             logger.debug("decompose_failed", error=str(e))
 
-        return [PlanStep(id=0, description=task, strategy=Strategy.DIRECT)]
+        return []
+
+    def _score_decomposition(self, steps: list[PlanStep], task: str) -> float:
+        if not steps:
+            return 0.0
+        score = 0.0
+        n = len(steps)
+        if 2 <= n <= 4:
+            score += 1.0
+        elif n == 1:
+            score += 0.3
+        elif n > 4:
+            score += 0.5
+        total_desc_len = sum(len(s.description) for s in steps)
+        avg_len = total_desc_len / n if n else 0
+        if 20 <= avg_len <= 120:
+            score += 0.5
+        task_words = set(task.lower().split())
+        for s in steps:
+            desc_words = set(s.description.lower().split())
+            overlap = len(task_words & desc_words)
+            if overlap > 0:
+                score += 0.3
+                break
+        return score
 
     async def reflect(
         self,
@@ -177,6 +248,24 @@ class ManagerAgent:
             "suggested_fix": None,
         }
 
+    async def generate_milestones(self, task: str) -> list[str]:
+        from sediman.agent.progress import generate_milestones_prompt, parse_milestones
+
+        prompt = generate_milestones_prompt(task)
+        messages = [
+            {"role": "system", "content": "You are a task planning assistant. Generate milestones as requested."},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            response = await self.llm.chat(messages=messages, tools=[])
+            text = response.text or ""
+            milestones = parse_milestones(text)
+            if milestones:
+                return milestones
+        except Exception as e:
+            logger.debug("generate_milestones_failed", error=str(e))
+        return []
+
     async def _build_prompt(
         self,
         task: str,
@@ -207,7 +296,21 @@ class ManagerAgent:
                 f"</previous_failure>"
             )
 
-        episodic = await self._get_episodic_context_async(task)
+        import asyncio
+
+        async def _empty() -> str | None:
+            return None
+
+        results = await asyncio.gather(
+            self._get_episodic_context_async(task),
+            self._memory.get_preference_context() if self._memory else _empty(),
+            self._memory.get_trajectory_context(task) if self._memory else _empty(),
+            return_exceptions=True,
+        )
+        episodic = results[0] if not isinstance(results[0], Exception) else None
+        preference_ctx = results[1] if not isinstance(results[1], Exception) else None
+        trajectory_ctx = results[2] if not isinstance(results[2], Exception) else None
+
         if episodic:
             system_prompt += (
                 f"\n\n<episodic_memory>\n"
@@ -215,28 +318,19 @@ class ManagerAgent:
                 f"</episodic_memory>"
             )
 
-        if self._memory:
-            try:
-                preference_ctx = await self._memory.get_preference_context()
-                if preference_ctx:
-                    system_prompt += (
-                        f"\n\n<skill_preferences>\n"
-                        f"{preference_ctx}\n"
-                        f"</skill_preferences>"
-                    )
-            except Exception:
-                pass
+        if preference_ctx:
+            system_prompt += (
+                f"\n\n<skill_preferences>\n"
+                f"{preference_ctx}\n"
+                f"</skill_preferences>"
+            )
 
-            try:
-                trajectory_ctx = await self._memory.get_trajectory_context(task)
-                if trajectory_ctx:
-                    system_prompt += (
-                        f"\n\n<similar_past_tasks>\n"
-                        f"{trajectory_ctx}\n"
-                        f"</similar_past_tasks>"
-                    )
-            except Exception:
-                pass
+        if trajectory_ctx:
+            system_prompt += (
+                f"\n\n<similar_past_tasks>\n"
+                f"{trajectory_ctx}\n"
+                f"</similar_past_tasks>"
+            )
 
         schedule_ctx = self._get_schedule_context(task)
         if schedule_ctx:
@@ -339,6 +433,10 @@ class ManagerAgent:
         if not browser_task:
             browser_task = data.get("task", "")
 
+        milestones = data.get("milestones")
+        if milestones and not isinstance(milestones, list):
+            milestones = None
+
         return ManagerPlan(
             browser_task=browser_task,
             schedule=schedule,
@@ -349,6 +447,7 @@ class ManagerAgent:
             subtasks=subtasks,
             skill_to_use=skill_to_use,
             use_subagent=data.get("use_subagent"),
+            milestones=[str(m) for m in milestones] if milestones else None,
         )
 
     async def _llm_plan(
@@ -447,25 +546,23 @@ class ManagerAgent:
         return None
 
     def _is_simple_browser_task(self, task: str) -> bool:
+        from sediman.agent.locales import (
+            CHAT_KEYWORDS,
+            SCHEDULE_KEYWORDS,
+            AMBIGUOUS_KEYWORDS,
+            ACTION_VERBS,
+        )
+
         if len(task) >= 500:
             return False
         task_lower = task.lower()
-        if any(kw in task_lower for kw in ("chat", "converse", "discuss")):
+        if any(kw in task_lower for kw in CHAT_KEYWORDS):
             return False
-        if any(kw in task_lower for kw in ("schedule", "cron", "remind", "recurring", "interval", "periodically")):
+        if any(kw in task_lower for kw in SCHEDULE_KEYWORDS):
             return False
-        if any(kw in task_lower for kw in ("sorry", "actually", "wait", "never mind", "no i meant", "i meant")):
+        if any(kw in task_lower for kw in AMBIGUOUS_KEYWORDS):
             return False
-        action_verbs = (
-            "go to", "open", "visit", "browse", "navigate", "search", "find",
-            "check", "get", "buy", "book", "fill", "download", "upload",
-            "log in", "sign in", "click", "scrape", "monitor", "track",
-            "watch", "extract", "take screenshot", "screenshot", "compare",
-            "look up", "show me", "tell me the", "read", "copy", "login",
-            "submit", "register", "sign up", "fill out", "verify", "test",
-            "follow",
-        )
-        if not any(kw in task_lower for kw in action_verbs):
+        if not any(kw in task_lower for kw in ACTION_VERBS):
             return False
         return True
 

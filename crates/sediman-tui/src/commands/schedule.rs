@@ -1,27 +1,51 @@
 use sediman_tui_core::command::{Command, CommandCategory};
 
-use crate::app::App;
+use crate::app::{App, AppModal, ModalLine};
+use super::sessions::truncate_str;
 
 pub async fn handle_schedule(app: &mut App, _args: &str) {
     match app.bridge.list_schedules().await {
         Ok(jobs) => {
             if jobs.is_empty() {
-                app.add_system_message("No scheduled jobs.".into());
+                app.active_modal = Some(AppModal::Info {
+                    title: "Scheduled Jobs".into(),
+                    lines: vec![
+                        ModalLine::blank(),
+                        ModalLine::muted("  No scheduled jobs."),
+                        ModalLine::muted("  Use /schedule-add <cron> <task> to create one."),
+                    ],
+                    scroll: 0,
+                });
                 return;
             }
-            app.add_system_message(format!("Scheduled Jobs ({})", jobs.len()));
+            let mut lines = vec![
+                ModalLine::heading(format!("  Scheduled Jobs ({})", jobs.len())),
+                ModalLine::blank(),
+            ];
             for j in &jobs {
                 let status = if j.enabled { "active" } else { "paused" };
-                app.add_system_message(format!(
-                    "  [{}] {} - cron: {} ({})",
-                    &j.id[..j.id.len().min(8)], j.task, j.cron_expr, status
-                ));
+                lines.push(ModalLine::primary(format!("  [{}]", truncate_str(&j.id, 8))));
+                lines.push(ModalLine::normal(format!("    {} \u{2014} cron: {} ({})", j.task, j.cron_expr, status)));
                 if let Some(ref next) = j.next_run {
-                    app.add_system_message(format!("    next: {}", next));
+                    lines.push(ModalLine::muted(format!("    next: {}", next)));
                 }
             }
+            app.active_modal = Some(AppModal::Info {
+                title: "Scheduled Jobs".into(),
+                lines,
+                scroll: 0,
+            });
         }
-        Err(e) => app.add_error_message(format!("Failed to list schedules: {}", e)),
+        Err(e) => {
+            app.active_modal = Some(AppModal::Info {
+                title: "Scheduled Jobs".into(),
+                lines: vec![
+                    ModalLine::blank(),
+                    ModalLine::error(format!("  Failed to load schedules: {}", e)),
+                ],
+                scroll: 0,
+            });
+        }
     }
 }
 
@@ -57,7 +81,6 @@ pub static CMD_SCHEDULE: Command = Command {
     aliases: &[],
     description: "List scheduled cron jobs",
     category: CommandCategory::Schedule,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_SCHEDULE_ADD: Command = Command {
@@ -65,7 +88,6 @@ pub static CMD_SCHEDULE_ADD: Command = Command {
     aliases: &[],
     description: "Add a scheduled task: /schedule-add <cron> <task>",
     category: CommandCategory::Schedule,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_SCHEDULE_REMOVE: Command = Command {
@@ -73,5 +95,4 @@ pub static CMD_SCHEDULE_REMOVE: Command = Command {
     aliases: &[],
     description: "Remove a scheduled job: /schedule-remove <id>",
     category: CommandCategory::Schedule,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

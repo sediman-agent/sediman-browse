@@ -2,6 +2,7 @@ pub mod skills;
 pub mod hub;
 pub mod memory;
 pub mod model;
+pub mod provider;
 pub mod schedule;
 pub mod sessions;
 pub mod browser;
@@ -18,17 +19,17 @@ use sediman_tui_core::CommandRegistry;
 
 pub fn register_commands(registry: &mut CommandRegistry) {
     registry.register(&skills::CMD_SKILLS);
-    registry.register(&skills::CMD_SKILL);
     registry.register(&skills::CMD_RUN_SKILL);
     registry.register(&hub::CMD_HUB_BROWSE);
     registry.register(&hub::CMD_HUB_SEARCH);
     registry.register(&hub::CMD_HUB_INSTALL);
+    registry.register(&hub::CMD_HUB_INSTALL_GITHUB);
     registry.register(&hub::CMD_HUB_INFO);
     registry.register(&hub::CMD_HUB_PUBLISH);
     registry.register(&memory::CMD_MEMORY);
     registry.register(&memory::CMD_REMEMBER);
     registry.register(&model::CMD_MODEL);
-    registry.register(&model::CMD_MODELS);
+    registry.register(&provider::CMD_PROVIDER);
     registry.register(&schedule::CMD_SCHEDULE);
     registry.register(&schedule::CMD_SCHEDULE_ADD);
     registry.register(&schedule::CMD_SCHEDULE_REMOVE);
@@ -101,7 +102,7 @@ mod tests {
         assert!(registry.get("/parallel").is_some());
         assert!(registry.get("/plan").is_some());
         assert!(registry.get("/model").is_some());
-        assert!(registry.get("/models").is_some());
+        // /models is now an alias of /model
     }
 
     #[test]
@@ -111,6 +112,7 @@ mod tests {
         assert!(registry.get("/hub browse").is_some());
         assert!(registry.get("/hub search").is_some());
         assert!(registry.get("/hub install").is_some());
+        assert!(registry.get("/hub install-github").is_some());
         assert!(registry.get("/hub info").is_some());
         assert!(registry.get("/hub publish").is_some());
     }

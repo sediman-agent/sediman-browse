@@ -8,9 +8,10 @@
     "build": "bun run --filter '*' build",
     "test": "bun run --filter '*' test",
     "typecheck": "bun run --filter '*' typecheck",
-    "start": "bash scripts/sediman.sh",
-    "rpc": "cd packages/server && bun run rpc",
-    "tui": "cd packages/sediman-tui && bun run start",
-    "python": "uv run python -m sediman.rpc_server"
+    "start": "cargo run -p sediman-tui --",
+    "tui": "cargo run -p sediman-tui --",
+    "python": "uv run python -m sediman.rpc_server",
+    "fullstack": "bash scripts/sediman.sh",
+    "rpc": "cd packages/server && bun run rpc"
   }
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from abc import ABC, abstractmethod
@@ -12,12 +13,42 @@ logger = structlog.get_logger()
 
 
 class EmbeddingProvider(ABC):
-    @abstractmethod
+
+    @property
+    def _cache(self) -> dict[str, list[list[float]]]:
+        if not hasattr(self, "_embed_cache"):
+            self._embed_cache: dict[str, list[list[float]]] = {}
+        return self._embed_cache
+
+    def _cache_key(self, texts: list[str]) -> str:
+        return hashlib.sha256("|".join(texts).encode()).hexdigest()
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        key = self._cache_key(texts)
+        cache = self._cache
+        if key in cache:
+            return cache[key]
+        result = await self._embed_impl(texts)
+        if len(cache) < 512:
+            cache[key] = result
+        return result
+
+    def embed_sync(self, texts: list[str]) -> list[list[float]]:
+        key = self._cache_key(texts)
+        cache = self._cache
+        if key in cache:
+            return cache[key]
+        result = self._embed_sync_impl(texts)
+        if len(cache) < 512:
+            cache[key] = result
+        return result
+
+    @abstractmethod
+    async def _embed_impl(self, texts: list[str]) -> list[list[float]]:
         ...
 
     @abstractmethod
-    def embed_sync(self, texts: list[str]) -> list[list[float]]:
+    def _embed_sync_impl(self, texts: list[str]) -> list[list[float]]:
         ...
 
     @property
@@ -29,6 +60,7 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     def name(self) -> str:
         ...
+
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -52,7 +84,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             self._sync_client = OpenAI(api_key=self._api_key)
         return self._sync_client
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_impl(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         client = self._lazy_client()
@@ -63,7 +95,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             logger.warning("openai_embed_failed", error=str(e))
             raise
 
-    def embed_sync(self, texts: list[str]) -> list[list[float]]:
+    def _embed_sync_impl(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         client = self._lazy_sync_client()
@@ -103,10 +135,13 @@ class FastEmbedProvider(EmbeddingProvider):
                 )
         return self._model
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        return self.embed_sync(texts)
+    async def _embed_impl(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        import asyncio as _asyncio
+        return await _asyncio.to_thread(self._embed_sync_impl, texts)
 
-    def embed_sync(self, texts: list[str]) -> list[list[float]]:
+    def _embed_sync_impl(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         model = self._lazy_model()
@@ -181,11 +216,15 @@ class TfidfEmbeddingProvider(EmbeddingProvider):
             self._vocab = set(self._vectorizer.get_feature_names_out())
             self._dim = len(self._vocab)
             self._persist_vocab()
+            self._cache.clear()
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        return self.embed_sync(texts)
+    async def _embed_impl(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        import asyncio as _asyncio
+        return await _asyncio.to_thread(self._embed_sync_impl, texts)
 
-    def embed_sync(self, texts: list[str]) -> list[list[float]]:
+    def _embed_sync_impl(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         if not self._fitted:

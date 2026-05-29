@@ -205,27 +205,182 @@ mod tests {
         let r: AgentResult = serde_json::from_str(json).unwrap();
         assert!(r.steps.is_empty());
     }
+
+    #[test]
+    fn test_skill_detail_empty_fields() {
+        let orig = SkillDetail {
+            name: "test".into(),
+            description: "desc".into(),
+            category: Some("browser".into()),
+            version: 1,
+            steps: vec![],
+            variables: vec![],
+            when_to_use: vec![],
+            pitfalls: vec![],
+            verification: vec![],
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: SkillDetail = serde_json::from_str(&json).unwrap();
+        assert!(restored.steps.is_empty());
+        assert!(restored.variables.is_empty());
+        assert!(restored.when_to_use.is_empty());
+        assert!(restored.pitfalls.is_empty());
+        assert!(restored.verification.is_empty());
+    }
+
+    #[test]
+    fn test_session_info_with_result() {
+        let orig = SessionInfo {
+            id: 42,
+            task: "my task".into(),
+            created_at: "2024-06-01".into(),
+            result: Some("done".into()),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: SessionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.id, 42);
+        assert_eq!(restored.result, Some("done".into()));
+    }
+
+    #[test]
+    fn test_session_info_no_result() {
+        let json = r#"{"id":7,"task":"pending","created_at":"2024-01-01","result":null}"#;
+        let s: SessionInfo = serde_json::from_str(json).unwrap();
+        assert!(s.result.is_none());
+    }
+
+    #[test]
+    fn test_hub_skill_roundtrip_full() {
+        let orig = HubSkill {
+            name: "My Skill".into(),
+            description: "Does things".into(),
+            category: "data".into(),
+            author: "dev".into(),
+            version: 2,
+            trust: "trusted".into(),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: HubSkill = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.author, "dev");
+        assert_eq!(restored.version, 2);
+        assert_eq!(restored.trust, "trusted");
+    }
+
+    #[test]
+    fn test_ws_message_with_data() {
+        let json = r#"{"type":"step","data":{"phase":"executing","action":"click"}}"#;
+        let msg: WsMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.msg_type, "step");
+        assert!(msg.data.is_some());
+        assert!(msg.event.is_none());
+    }
+
+    #[test]
+    fn test_memory_data_roundtrip_full() {
+        let orig = MemoryData {
+            memory: "long memory text with unicode 世界".into(),
+            user: "user context".into(),
+            memory_entries: 5,
+            user_entries: 3,
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: MemoryData = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.memory_entries, 5);
+        assert_eq!(restored.user_entries, 3);
+        assert!(restored.memory.contains("世界"));
+    }
+
+    #[test]
+    fn test_server_status_roundtrip_full() {
+        let orig = ServerStatus {
+            running: true,
+            uptime_secs: 3600,
+            browser_open: true,
+            tasks_completed: 42,
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: ServerStatus = serde_json::from_str(&json).unwrap();
+        assert!(restored.running);
+        assert!(restored.browser_open);
+        assert_eq!(restored.tasks_completed, 42);
+        assert_eq!(restored.uptime_secs, 3600);
+    }
+
+    #[test]
+    fn test_cron_job_roundtrip_full() {
+        let orig = CronJob {
+            id: "job-1".into(),
+            task: "daily report".into(),
+            cron_expr: "0 9 * * *".into(),
+            skill_name: Some("daily-backup".into()),
+            enabled: true,
+            last_run: Some("2024-01-01T09:00:00Z".into()),
+            next_run: Some("2024-01-02T09:00:00Z".into()),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: CronJob = serde_json::from_str(&json).unwrap();
+        assert!(restored.enabled);
+        assert_eq!(restored.cron_expr, "0 9 * * *");
+        assert_eq!(restored.skill_name.unwrap(), "daily-backup");
+    }
+
+    #[test]
+    fn test_skill_variable_roundtrip() {
+        let orig = SkillVariable {
+            name: "url".into(),
+            description: "the target URL".into(),
+            default: Some("https://example.com".into()),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: SkillVariable = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "url");
+        assert_eq!(restored.default.unwrap(), "https://example.com");
+    }
+
+    #[test]
+    fn test_skill_step_roundtrip() {
+        let orig = SkillStep {
+            description: "Click submit".into(),
+            action_type: Some("click".into()),
+            url: Some("https://example.com".into()),
+            selector: Some("#submit".into()),
+            text: None,
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: SkillStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.action_type.unwrap(), "click");
+        assert!(restored.text.is_none());
+    }
 }
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepEvent {
+    #[serde(default)]
     pub phase: String,
+    #[serde(default)]
     pub action: String,
+    #[serde(default, alias = "observation")]
     pub detail: Option<String>,
+    #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
     pub screenshot: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResult {
+    #[serde(default)]
     pub task: String,
     pub result: String,
+    #[serde(default)]
     pub success: bool,
+    #[serde(default)]
     pub steps: Vec<StepEvent>,
     pub skill_created: Option<String>,
     pub scheduled_job_id: Option<String>,
+    #[serde(default)]
     pub elapsed_secs: u64,
 }
 

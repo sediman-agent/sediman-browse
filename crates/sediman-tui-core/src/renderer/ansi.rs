@@ -32,11 +32,20 @@ impl AnsiWriter {
     }
 
     pub fn write(&mut self, stdout: &mut dyn IoWrite, changes: &[super::diff::Change]) -> io::Result<()> {
+        let mut last_y: Option<u16> = None;
+        let mut next_x: Option<u16> = None;
+
         for change in changes {
-            write!(stdout, "\x1b[{};{}H", change.y + 1, change.x + 1)?;
-            self.write_style_io(stdout, change.cell.style);
+            let need_position = last_y != Some(change.y) || next_x != Some(change.x);
+            if need_position {
+                write!(stdout, "\x1b[{};{}H", change.y + 1, change.x + 1)?;
+            }
+            self.write_style_io(stdout, change.cell.style)?;
             let ch = if change.cell.ch == '\0' { ' ' } else { change.cell.ch };
             stdout.write_all(ch.to_string().as_bytes())?;
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+            last_y = Some(change.y);
+            next_x = Some(change.x + w);
         }
         stdout.flush()
     }
@@ -69,31 +78,50 @@ impl AnsiWriter {
         out
     }
 
-    fn write_style_io(&mut self, out: &mut dyn IoWrite, style: Style) {
+    fn write_style_io(&mut self, out: &mut dyn IoWrite, style: Style) -> io::Result<()> {
         let fg_changed = self.last_fg != style.fg;
         let bg_changed = self.last_bg != style.bg;
 
         if fg_changed || bg_changed {
-            out.write_all(b"\x1b[").unwrap();
+            out.write_all(b"\x1b[0")?;
             if let Some(fg) = style.fg {
-                Self::write_color_io(out, 38, fg);
+                Self::write_color_io(out, 38, fg)?;
             } else {
-                out.write_all(b"39").unwrap();
+                out.write_all(b";39")?;
             }
             if let Some(bg) = style.bg {
-                Self::write_color_io(out, 48, bg);
+                Self::write_color_io(out, 48, bg)?;
             } else {
-                out.write_all(b";49").unwrap();
+                out.write_all(b";49")?;
             }
-            out.write_all(b"m").unwrap();
+            if style.attrs.bold { out.write_all(b";1")?; }
+            if style.attrs.dim { out.write_all(b";2")?; }
+            if style.attrs.italic { out.write_all(b";3")?; }
+            if style.attrs.underline { out.write_all(b";4")?; }
+            if style.attrs.reverse { out.write_all(b";7")?; }
+            if style.attrs.strikethrough { out.write_all(b";9")?; }
+            out.write_all(b"m")?;
             self.last_fg = style.fg;
             self.last_bg = style.bg;
         }
+        Ok(())
     }
 
-    fn write_color_io(out: &mut dyn IoWrite, base: u8, color: Color) {
-        let (r, g, b) = color.to_rgb();
-        write!(out, ";{};2;{};{};{}", base + 8, r, g, b).unwrap();
+    fn write_color_io(out: &mut dyn IoWrite, base: u8, color: Color) -> io::Result<()> {
+        match color {
+            Color::Named(idx) => {
+                let code = Self::ansi_16_code(base, idx);
+                write!(out, ";{}", code)?;
+            }
+            Color::Rgb(r, g, b) => {
+                write!(out, ";{};2;{};{};{}", base, r, g, b)?;
+            }
+            Color::Rgba(_) => {
+                let (r, g, b) = color.to_rgb();
+                write!(out, ";{};2;{};{};{}", base, r, g, b)?;
+            }
+        }
+        Ok(())
     }
 
     fn write_sgr(out: &mut String, style: Style) {
@@ -114,8 +142,31 @@ impl AnsiWriter {
     }
 
     fn write_color(out: &mut String, base: u8, color: Color) {
-        let (r, g, b) = color.to_rgb();
-        let _ = write!(out, ";{};2;{};{};{}", base + 8, r, g, b);
+        match color {
+            Color::Named(idx) => {
+                let code = Self::ansi_16_code(base, idx);
+                let _ = write!(out, ";{}", code);
+            }
+            Color::Rgb(r, g, b) => {
+                let _ = write!(out, ";{};2;{};{};{}", base, r, g, b);
+            }
+            Color::Rgba(_) => {
+                let (r, g, b) = color.to_rgb();
+                let _ = write!(out, ";{};2;{};{};{}", base, r, g, b);
+            }
+        }
+    }
+
+    /// Convert ANSI 16-color index to SGR code.
+    /// base=38 for foreground, base=48 for background.
+    /// Colors 0-7 → 30-37 (fg) or 40-47 (bg)
+    /// Colors 8-15 → 90-97 (fg bright) or 100-107 (bg bright)
+    fn ansi_16_code(base: u8, idx: u8) -> u8 {
+        if idx < 8 {
+            base - 8 + idx // 38-8+0=30, 38-8+1=31, ..., 38-8+7=37
+        } else {
+            base + 52 + idx // 38+52+8=90, ..., 38+52+15=97  |  48+52+8=100, ..., 48+52+15=107
+        }
     }
 }
 
@@ -235,8 +286,8 @@ mod tests {
         let mut out = Vec::new();
         w.write(&mut out, &changes).unwrap();
         let s = String::from_utf8(out).unwrap();
-        assert!(s.contains(";46;2;"));
-        assert!(s.contains(";46;2;") );
+        // Named RED (index 1) → ANSI 31 for foreground
+        assert!(s.contains(";31"));
     }
 
     #[test]
@@ -262,5 +313,63 @@ mod tests {
         AnsiWriter::show_cursor(&mut out);
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("\x1b[?25h"));
+    }
+
+    #[test]
+    fn test_render_bg_color() {
+        let mut buf = CellBuffer::new(1, 1);
+        buf.put(0, 0, Cell::new('x', Style::new().bg(Color::RED)));
+        let mut writer = AnsiWriter::new();
+        let mut output = Vec::new();
+        let changes = vec![Change { x: 0, y: 0, cell: buf.get(0, 0).unwrap().clone() }];
+        writer.write(&mut output, &changes).unwrap();
+        let s = String::from_utf8(output).unwrap();
+        assert!(s.contains(";41m"));
+    }
+
+    #[test]
+    fn test_render_fg_and_bg() {
+        let mut buf = CellBuffer::new(1, 1);
+        buf.put(0, 0, Cell::new('x', Style::new().fg(Color::GREEN).bg(Color::RED)));
+        let mut writer = AnsiWriter::new();
+        let mut output = Vec::new();
+        let changes = vec![Change { x: 0, y: 0, cell: buf.get(0, 0).unwrap().clone() }];
+        writer.write(&mut output, &changes).unwrap();
+        let s = String::from_utf8(output).unwrap();
+        assert!(s.contains(";32;"));
+        assert!(s.contains(";41m"));
+    }
+
+    #[test]
+    fn test_render_all_attributes() {
+        let mut buf = CellBuffer::new(1, 1);
+        let style = Style::new()
+            .fg(Color::WHITE)
+            .add_modifier(TextAttributes::bold())
+            .add_modifier(TextAttributes::italic())
+            .add_modifier(TextAttributes::underline())
+            .add_modifier(TextAttributes::dim())
+            .add_modifier(TextAttributes::reverse())
+            .add_modifier(TextAttributes::strikethrough());
+        buf.put(0, 0, Cell::new('x', style));
+        let mut writer = AnsiWriter::new();
+        let mut output = Vec::new();
+        let changes = vec![Change { x: 0, y: 0, cell: buf.get(0, 0).unwrap().clone() }];
+        writer.write(&mut output, &changes).unwrap();
+        let s = String::from_utf8(output).unwrap();
+        assert!(s.contains("1;"));
+        assert!(s.contains("3;"));
+        assert!(s.contains("4;"));
+        assert!(s.contains("2;"));
+        assert!(s.contains("7;"));
+        assert!(s.contains("9"));
+    }
+
+    #[test]
+    fn test_write_empty_changes() {
+        let mut writer = AnsiWriter::new();
+        let mut output = Vec::new();
+        writer.write(&mut output, &[]).unwrap();
+        assert!(output.is_empty());
     }
 }

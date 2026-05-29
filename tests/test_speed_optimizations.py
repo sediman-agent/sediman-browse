@@ -33,23 +33,20 @@ class TestNavigateUsesDomContentLoaded:
     async def test_navigate_networkidle_timeout_short(self, ctrl):
         ctrl._page.goto = AsyncMock(return_value=MagicMock(status=200))
         ctrl._page.url = "https://example.com"
-        ctrl._page.wait_for_load_state = AsyncMock()
 
         await ctrl.navigate("https://example.com")
 
-        call_args = ctrl._page.wait_for_load_state.call_args
-        assert call_args.kwargs.get("timeout") == 5000 or \
-               (call_args[1] if len(call_args) > 1 else {}).get("timeout") == 5000
+        ctrl._page.goto.assert_called_once()
+        call_args = ctrl._page.goto.call_args
+        assert call_args.kwargs.get("wait_until") == "domcontentloaded"
 
     @pytest.mark.asyncio
-    async def test_navigate_handles_networkidle_timeout(self, ctrl):
-        ctrl._page.goto = AsyncMock(return_value=MagicMock(status=200))
-        ctrl._page.url = "https://example.com"
-        ctrl._page.wait_for_load_state = AsyncMock(side_effect=RuntimeError("timeout"))
+    async def test_navigate_handles_goto_exception(self, ctrl):
+        ctrl._page.goto = AsyncMock(side_effect=RuntimeError("timeout"))
 
         result = await ctrl.navigate("https://example.com")
 
-        assert "Navigated" in result
+        assert "failed" in result.lower() or "error" in result.lower()
 
 
 class TestGoBackForwardRefresh:

@@ -7,48 +7,7 @@ describe("rpc-handlers", () => {
     resetState();
   });
 
-  // ── Skills (pure TS, no Python needed) ──────────────────────────
-  it("skills.list returns an array", async () => {
-    const result = await handlers["skills.list"]({}) as { skills: unknown[] };
-    expect(Array.isArray(result.skills)).toBe(true);
-  });
-
-  it("skills.get returns skill or null", async () => {
-    const result = await handlers["skills.get"]({ name: "test-skill" });
-    expect(result).toBeTruthy();
-    if (result) {
-      const r = result as Record<string, unknown>;
-      expect(typeof r.name).toBe("string");
-    }
-  });
-
-  it("skills.delete returns deleted name", async () => {
-    const result = await handlers["skills.delete"]({ name: "nonexistent-test" }) as { deleted: string };
-    expect(result.deleted).toBe("");
-  });
-
-  // ── System (native TS) ──────────────────────────────────────────
-  it("system.status returns TS-native status", async () => {
-    const result = await handlers["system.status"]({}) as Record<string, unknown>;
-    expect(result.browser_open).toBe(false);
-    expect(result).toHaveProperty("scheduler");
-    expect(result).toHaveProperty("provider");
-    expect(result).toHaveProperty("model");
-  });
-
-  it("system.status reflects in-memory provider state", async () => {
-    await handlers["model.switch"]({ provider: "ollama", model: "llama3" });
-    const result = await handlers["system.status"]({}) as Record<string, unknown>;
-    expect(result.provider).toBe("ollama");
-    expect(result.model).toBe("llama3");
-  });
-
-  it("system.doctor returns checks object", async () => {
-    const result = await handlers["system.doctor"]({}) as { checks: Record<string, unknown> };
-    expect(result.checks).toBeDefined();
-    expect(typeof result.checks.google_chrome !== undefined).toBe(true);
-  });
-
+  // ── System (proxied to Python) ──────────────────────────────────
   it("system.btw fails without API key", async () => {
     const key = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -66,6 +25,21 @@ describe("rpc-handlers", () => {
     expect(result.answer).toBe("");
   });
 
+  it("system.set_soul handles set and reset", async () => {
+    const result1 = await handlers["system.set_soul"]({ text: "hello" }) as { content: string };
+    expect(result1.content).toBe("hello");
+    const result2 = await handlers["system.set_soul"]({ reset: true }) as { content: string };
+    expect(typeof result2.content).toBe("string");
+  });
+
+  it("system.status fails gracefully without Python", async () => {
+    try {
+      await handlers["system.status"]({});
+    } catch (e: unknown) {
+      expect((e as Error).message).toContain("socket");
+    }
+  });
+
   it("system.screenshot fails gracefully without Python", async () => {
     try {
       await handlers["system.screenshot"]({});
@@ -74,7 +48,12 @@ describe("rpc-handlers", () => {
     }
   });
 
-  // ── Agent ───────────────────────────────────────────────────────
+  it("system.doctor returns checks object", async () => {
+    const result = await handlers["system.doctor"]({}) as { checks: Record<string, unknown> };
+    expect(result.checks).toBeDefined();
+  });
+
+  // ── Agent (proxied to Python) ────────────────────────────────────
   it("agent.run fails gracefully without Python", async () => {
     try {
       await handlers["agent.run"]({ task: "test" });
@@ -92,26 +71,28 @@ describe("rpc-handlers", () => {
     }
   });
 
-  // ── Model (native TS) ───────────────────────────────────────────
-  it("model.list_providers returns providers", async () => {
-    const result = await handlers["model.list_providers"]({}) as { providers: unknown[] };
-    expect(Array.isArray(result.providers)).toBe(true);
-    expect(result.providers.length).toBe(2);
-    expect((result.providers[0] as Record<string, unknown>).name).toBe("openai");
+  // ── Proxied ops fail gracefully without Python ──────────────────
+  it("skills.list fails gracefully without Python", async () => {
+    try { await handlers["skills.list"]({}); } catch (e: unknown) {
+      expect((e as Error).message).toContain("socket");
+    }
   });
 
-  it("model.switch updates provider and model", async () => {
-    const result = await handlers["model.switch"]({ provider: "ollama", model: "llama3" }) as Record<string, unknown>;
-    expect(result.provider).toBe("ollama");
-    expect(result.model).toBe("llama3");
+  it("hub.browse fails gracefully without Python", async () => {
+    try { await handlers["hub.browse"]({}); } catch (e: unknown) {
+      expect((e as Error).message).toContain("socket");
+    }
   });
 
-  it("model.switch rejects empty provider", async () => {
-    try {
-      await handlers["model.switch"]({ provider: "" });
-      expect.unreachable("should have thrown");
-    } catch (e: unknown) {
-      expect((e as Error).message).toContain("provider");
+  it("memory.add fails gracefully without Python", async () => {
+    try { await handlers["memory.add"]({ target: "memory", content: "test" }); } catch (e: unknown) {
+      expect((e as Error).message).toContain("socket");
+    }
+  });
+
+  it("model.switch fails gracefully without Python", async () => {
+    try { await handlers["model.switch"]({ provider: "openai" }); } catch (e: unknown) {
+      expect((e as Error).message).toContain("socket");
     }
   });
 
@@ -131,46 +112,20 @@ describe("rpc-handlers", () => {
     expect(off.allowed).toBe(false);
   });
 
-  // ── Schedule (pure TS) ──────────────────────────────────────────
-  it("schedule.list returns an array", async () => {
-    const result = await handlers["schedule.list"]({}) as { jobs: unknown[] };
-    expect(Array.isArray(result.jobs)).toBe(true);
-  });
-
-  // ── Memory (pure TS) ────────────────────────────────────────────
-  it("memory.get returns entries and usage", async () => {
-    const result = await handlers["memory.get"]({}) as Record<string, unknown>;
-    expect(result).toHaveProperty("entries");
-    expect(result).toHaveProperty("usage");
-  });
-
-  // ── Sessions (pure TS) ──────────────────────────────────────────
-  it("sessions.list returns an array", async () => {
-    const result = await handlers["sessions.list"]({}) as { sessions: unknown[] };
-    expect(Array.isArray(result.sessions)).toBe(true);
-  });
-
-  // ── Hub (pure TS, uses fetch) ───────────────────────────────────
-  it("hub.browse returns array of skills (may be empty)", async () => {
-    const result = await handlers["hub.browse"]({}) as { skills: unknown[] };
-    expect(Array.isArray(result.skills)).toBe(true);
-  });
-
-  // ── Unknown method ──────────────────────────────────────────────
-  it("throws for unknown methods (via handler map absence)", () => {
-    expect(handlers["__no_such_method__"]).toBeUndefined();
-  });
-
   // ── Method enumeration ──────────────────────────────────────────
   it("has all expected method handlers", () => {
     const expected = [
       "system.status", "system.screenshot", "system.btw", "system.doctor",
+      "system.set_soul",
       "agent.run", "agent.cancel",
-      "skills.list", "skills.get", "skills.run", "skills.delete",
+      "skills.list", "skills.get", "skills.run", "skills.create", "skills.delete",
       "hub.browse", "hub.search", "hub.info", "hub.install",
+      "hub.install_github", "hub.check_update", "hub.update_skill",
+      "hub.remove", "hub.get_lock_info",
+      "memory.get", "memory.add", "memory.replace", "memory.remove",
+      "memory.search", "memory.changelog",
+      "sessions.list", "sessions.search", "sessions.save", "sessions.get",
       "schedule.list", "schedule.add", "schedule.remove",
-      "memory.get", "memory.add",
-      "sessions.list",
       "model.switch", "model.list_providers",
       "terminal.set", "terminal.status",
       "record.start", "record.stop", "record.active",

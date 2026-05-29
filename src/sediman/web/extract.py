@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -20,12 +21,31 @@ _USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
+_shared_client: httpx.AsyncClient | None = None
+_url_cache: dict[str, tuple[str, dict[str, Any], float]] = {}
+_URL_CACHE_TTL = 300
+_URL_CACHE_MAX = 50
+
+
+def clear_url_cache() -> None:
+    _url_cache.clear()
+
 
 async def http_extract(url: str) -> tuple[str, dict[str, Any]]:
     """Fast HTTP extraction: httpx fetch -> readability -> markdownify.
 
     Returns (markdown_content, stats_dict).
     """
+    cached = _url_cache.get(url)
+    if cached and (time.time() - cached[2]) < _URL_CACHE_TTL:
+        stats = dict(cached[1])
+        stats["cached"] = True
+        return cached[0], stats
+
+    if len(_url_cache) > _URL_CACHE_MAX:
+        oldest_key = min(_url_cache, key=lambda k: _url_cache[k][2])
+        del _url_cache[oldest_key]
+
     stats: dict[str, Any] = {"method": "http", "url": url}
 
     async with httpx.AsyncClient(
@@ -33,10 +53,33 @@ async def http_extract(url: str) -> tuple[str, dict[str, Any]]:
         follow_redirects=True,
         headers={"User-Agent": _USER_AGENT},
     ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        stats["status_code"] = response.status_code
-        stats["content_type"] = response.headers.get("content-type", "")
+        last_exc: Exception | None = None
+        response = None
+        for attempt in range(3):
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (429, 502, 503, 504) and attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+                    last_exc = e
+                    continue
+                raise
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+                    last_exc = e
+                    continue
+                raise
+
+    if response is None and last_exc is not None:
+        raise last_exc
+
+    stats["status_code"] = response.status_code
+    stats["content_type"] = response.headers.get("content-type", "")
 
     html = response.text
     stats["html_chars"] = len(html)
@@ -66,6 +109,8 @@ async def http_extract(url: str) -> tuple[str, dict[str, Any]]:
 
     stats["markdown_chars"] = len(markdown)
     stats["title"] = title
+
+    _url_cache[url] = (markdown, dict(stats), time.time())
 
     return markdown, stats
 

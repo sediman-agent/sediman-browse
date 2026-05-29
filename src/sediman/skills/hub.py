@@ -531,7 +531,89 @@ class HubClient:
             return False, f"Validation failed: {'; '.join(result.errors)}"
 
         logger.info("skill_publish", name=skill_data.name, trust=result.trust_level)
+
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", "")
+        if token:
+            return self._publish_via_pr(skill_data, token)
+
         return True, (
             f"Skill '{skill_data.name}' validated ({result.trust_level}). "
-            "Publish to hub by opening a PR at https://github.com/sediman/skills-hub"
+            "Set GITHUB_TOKEN to auto-create a PR. "
+            "Otherwise open a PR manually at https://github.com/sediman/skills-hub"
         )
+
+    def _publish_via_pr(self, skill_data: SkillData, token: str) -> tuple[bool, str]:
+        import base64
+
+        hub_repo = os.environ.get("SKILLS_HUB_REPO", "sediman/skills-hub")
+        api_url = f"https://api.github.com/repos/{hub_repo}"
+        branch_name = f"skill/{skill_data.name}-{int(time.time())}"
+
+        skill_json_content = json.dumps(skill_data.to_json(), indent=2)
+        skill_md_content = skill_data.to_skill_md()
+        skill_dir = f"skills/{skill_data.name}"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        try:
+            main_resp = self._http.get(
+                f"{api_url}/git/ref/heads/main",
+                headers=headers,
+            )
+            if main_resp.status_code != 200:
+                return False, "Could not fetch main branch ref"
+            main_sha = main_resp.json()["object"]["sha"]
+
+            branch_resp = self._http.post(
+                f"{api_url}/git/refs",
+                json={"ref": f"refs/heads/{branch_name}", "sha": main_sha},
+                headers=headers,
+            )
+            if branch_resp.status_code not in (201, 422):
+                return False, f"Could not create branch: {branch_resp.text[:100]}"
+
+            files = [
+                (f"{skill_dir}/skill.json", skill_json_content),
+                (f"{skill_dir}/SKILL.md", skill_md_content),
+            ]
+            for path, content in files:
+                encoded = base64.b64encode(content.encode()).decode()
+                put_resp = self._http.put(
+                    f"{api_url}/contents/{path}",
+                    json={
+                        "message": f"Add skill: {skill_data.name}",
+                        "content": encoded,
+                        "branch": branch_name,
+                    },
+                    headers=headers,
+                )
+                if put_resp.status_code not in (201, 200):
+                    return False, f"Could not create file {path}: {put_resp.text[:100]}"
+
+            pr_title = f"Add skill: {skill_data.name}"
+            pr_body = f"## {skill_data.name}\n\n{skill_data.description}\n\n"
+            pr_body += f"- Category: {skill_data.category}\n- Version: {skill_data.version}\n"
+            pr_body += f"- Source: {skill_data.source}\n"
+            pr_resp = self._http.post(
+                f"{api_url}/pulls",
+                json={
+                    "title": pr_title,
+                    "body": pr_body,
+                    "head": branch_name,
+                    "base": "main",
+                },
+                headers=headers,
+            )
+            if pr_resp.status_code == 201:
+                pr_url = pr_resp.json().get("html_url", "")
+                logger.info("skill_published_via_pr", name=skill_data.name, pr=pr_url)
+                return True, f"PR created: {pr_url}"
+            else:
+                return False, f"Could not create PR: {pr_resp.text[:100]}"
+
+        except Exception as e:
+            logger.warning("hub_pr_creation_failed", error=str(e))
+            return False, f"PR creation failed: {e}"

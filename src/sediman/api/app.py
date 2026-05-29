@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 import uuid
@@ -17,6 +18,41 @@ from sediman.browser.session import BrowserSession
 from sediman.llm.provider import create_provider, LLMProvider
 
 logger = structlog.get_logger()
+
+_sentry_initialized = False
+
+
+def _init_sentry() -> None:
+    global _sentry_initialized
+    if _sentry_initialized:
+        return
+    dsn = os.environ.get("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        )
+        _sentry_initialized = True
+        logger.info("sentry_initialized")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("sentry_init_failed", error=str(e))
+
+
+def _capture_exception(exc: Exception) -> None:
+    if not _sentry_initialized:
+        return
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
 
 MAX_TASK_LENGTH = 10000
 MAX_NAME_LENGTH = 64
@@ -48,31 +84,10 @@ def _classify_error(exc: Exception) -> tuple[str, str, str | None]:
 
 
 def _setup_scheduler() -> Any:
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from apscheduler.triggers.cron import CronTrigger
-    from sediman.scheduler.cron import CronManager
+    from sediman.scheduler.cron import CronScheduler
 
-    sched = AsyncIOScheduler()
-    cron = CronManager()
-    jobs = cron.list_jobs()
-
-    for job in jobs:
-        if not job.get("enabled", True):
-            continue
-        parts = job["cron"].split()
-        if len(parts) != 5:
-            continue
-        trigger = CronTrigger(
-            minute=parts[0], hour=parts[1],
-            day=parts[2], month=parts[3], day_of_week=parts[4],
-        )
-        sched.add_job(
-            _run_scheduled_task, trigger=trigger,
-            id=job["id"], args=[job], replace_existing=True,
-        )
-
+    sched = CronScheduler()
     sched.start()
-    logger.info("scheduler_started", jobs=len(jobs))
     return sched
 
 
@@ -87,27 +102,9 @@ async def _run_scheduled_task(job: dict[str, Any]) -> None:
 
 def reload_scheduler_jobs() -> None:
     global _scheduler
-    if _scheduler is None:
+    if not isinstance(_scheduler, object) or not hasattr(_scheduler, "reload"):
         return
-    _scheduler.remove_all_jobs()
-    from apscheduler.triggers.cron import CronTrigger
-    from sediman.scheduler.cron import CronManager
-    cron = CronManager()
-    for job in cron.list_jobs():
-        if not job.get("enabled", True):
-            continue
-        parts = job["cron"].split()
-        if len(parts) != 5:
-            continue
-        trigger = CronTrigger(
-            minute=parts[0], hour=parts[1],
-            day=parts[2], month=parts[3], day_of_week=parts[4],
-        )
-        _scheduler.add_job(
-            _run_scheduled_task, trigger=trigger,
-            id=job["id"], args=[job], replace_existing=True,
-        )
-    logger.info("scheduler_reloaded")
+    _scheduler.reload()
 
 
 async def _start_queue_worker() -> None:
@@ -156,6 +153,7 @@ async def _queue_worker() -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     global _scheduler, _browser
+    _init_sentry()
     try:
         _scheduler = _setup_scheduler()
     except Exception as e:
@@ -294,6 +292,43 @@ class HubInstallRequest(BaseModel):
     def validate_name(cls, v: str) -> str:
         if not v or not _SAFE_NAME_RE.match(v) or len(v) > MAX_NAME_LENGTH:
             raise ValueError(f"Invalid skill name: {v!r}")
+        return v
+
+
+class MemoryAddRequest(BaseModel):
+    target: str
+    content: str
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        if v not in ("memory", "user"):
+            raise ValueError("target must be 'memory' or 'user'")
+        return v
+
+
+class MemoryReplaceRequest(BaseModel):
+    target: str
+    old_entry: str
+    new_entry: str
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        if v not in ("memory", "user"):
+            raise ValueError("target must be 'memory' or 'user'")
+        return v
+
+
+class MemoryRemoveRequest(BaseModel):
+    target: str
+    entry: str
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        if v not in ("memory", "user"):
+            raise ValueError("target must be 'memory' or 'user'")
         return v
 
 
@@ -685,6 +720,60 @@ async def get_memory():
             "memory": {"chars": mem_usage.chars, "limit": mem_usage.limit, "pct": mem_usage.pct},
             "user": {"chars": user_usage.chars, "limit": user_usage.limit, "pct": user_usage.pct},
         },
+    }
+
+
+@app.post("/api/memory/add")
+async def add_memory(req: MemoryAddRequest):
+    from sediman.memory.store import MemoryStore
+    store = MemoryStore()
+    result = store.add_or_consolidate(req.target, req.content)
+    if not result.success:
+        raise _make_error("MEMORY_ERROR", result.message)
+    return {
+        "success": True,
+        "message": result.message,
+        "entries": result.entries,
+        "usage": (
+            {"chars": result.usage.chars, "limit": result.usage.limit, "pct": result.usage.pct}
+            if result.usage else None
+        ),
+    }
+
+
+@app.post("/api/memory/replace")
+async def replace_memory(req: MemoryReplaceRequest):
+    from sediman.memory.store import MemoryStore
+    store = MemoryStore()
+    result = store.replace(req.target, req.old_entry, req.new_entry)
+    if not result.success:
+        raise _make_error("MEMORY_ERROR", result.message)
+    return {
+        "success": True,
+        "message": result.message,
+        "entries": result.entries,
+        "usage": (
+            {"chars": result.usage.chars, "limit": result.usage.limit, "pct": result.usage.pct}
+            if result.usage else None
+        ),
+    }
+
+
+@app.post("/api/memory/remove")
+async def remove_memory(req: MemoryRemoveRequest):
+    from sediman.memory.store import MemoryStore
+    store = MemoryStore()
+    result = store.remove(req.target, req.entry)
+    if not result.success:
+        raise _make_error("MEMORY_ERROR", result.message)
+    return {
+        "success": True,
+        "message": result.message,
+        "entries": result.entries,
+        "usage": (
+            {"chars": result.usage.chars, "limit": result.usage.limit, "pct": result.usage.pct}
+            if result.usage else None
+        ),
     }
 
 

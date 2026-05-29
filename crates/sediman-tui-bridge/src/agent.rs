@@ -13,9 +13,17 @@ use crate::types::*;
 /// the stream.
 pub struct TaskStream {
     pub rx: tokio::sync::mpsc::UnboundedReceiver<WsMessage>,
-    cancel_tx: tokio::sync::oneshot::Sender<()>,
-    #[allow(dead_code)]
+    cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TaskStream {
+    fn drop(&mut self) {
+        if let Some(tx) = self.cancel_tx.take() {
+            let _ = tx.send(());
+        }
+        self.handle.abort();
+    }
 }
 
 impl TaskStream {
@@ -39,6 +47,7 @@ impl TaskStream {
             .write_all(raw.as_bytes())
             .await
             .map_err(|e| BridgeError::Connection(e.to_string()))?;
+        writer.shutdown().await.map_err(|e| BridgeError::Io(e))?;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
@@ -49,11 +58,19 @@ impl TaskStream {
             let mut line = String::new();
 
             loop {
+                let read_result = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    buf_reader.read_line(&mut line),
+                ).await;
+
                 tokio::select! {
-                    result = buf_reader.read_line(&mut line) => {
+                    _ = &mut cancel_rx => {
+                        break;
+                    }
+                    result = async { read_result } => {
                         match result {
-                            Ok(0) => break, // EOF
-                            Ok(_) => {
+                            Ok(Ok(0)) => break,
+                            Ok(Ok(_)) => {
                                 let trimmed = line.trim().to_string();
                                 line.clear();
                                 if trimmed.is_empty() {
@@ -61,7 +78,6 @@ impl TaskStream {
                                 }
                                 match serde_json::from_str::<serde_json::Value>(&trimmed) {
                                     Ok(msg) => {
-                                        // Notification (no "id") → progress event
                                         if msg.get("id").is_none() {
                                             if let Some(params) = msg.get("params") {
                                                 let ws_msg = WsMessage {
@@ -82,7 +98,6 @@ impl TaskStream {
                                             continue;
                                         }
 
-                                        // Response with "id" → result or error
                                         if let Some(err) = msg.get("error") {
                                             let ws_msg = WsMessage {
                                                 msg_type: "error".into(),
@@ -121,7 +136,7 @@ impl TaskStream {
                                     }
                                 }
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 let ws_msg = WsMessage {
                                     msg_type: "error".into(),
                                     data: None,
@@ -132,10 +147,18 @@ impl TaskStream {
                                 let _ = tx_clone.send(ws_msg);
                                 break;
                             }
+                            Err(_) => {
+                                let ws_msg = WsMessage {
+                                    msg_type: "error".into(),
+                                    data: None,
+                                    event: None,
+                                    result: None,
+                                    error: Some("Read timeout (120s)".into()),
+                                };
+                                let _ = tx_clone.send(ws_msg);
+                                break;
+                            }
                         }
-                    }
-                    _ = &mut cancel_rx => {
-                        break;
                     }
                 }
             }
@@ -143,12 +166,15 @@ impl TaskStream {
 
         Ok(Self {
             rx,
-            cancel_tx,
+            cancel_tx: Some(cancel_tx),
             handle,
         })
     }
 
-    pub fn cancel(self) {
-        let _ = self.cancel_tx.send(());
+    pub fn cancel(mut self) {
+        if let Some(tx) = self.cancel_tx.take() {
+            let _ = tx.send(());
+        }
+        self.handle.abort();
     }
 }

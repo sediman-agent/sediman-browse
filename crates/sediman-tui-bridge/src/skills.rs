@@ -1,2 +1,3 @@
-// hub_info is already in client.rs via the unified call() method.
-// This file is kept for future hub-specific extensions.
+// Skills-related RPC methods are in client.rs.
+// This module is reserved for future skill-specific extensions.
+

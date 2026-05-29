@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::renderer::{CellBuffer, Color, Rect, Style};
 
 pub struct TextEditor {
-    buffer: String,
+    buffer: Vec<char>,
     cursor: usize,
     history: Vec<String>,
     history_pos: Option<usize>,
@@ -13,7 +13,7 @@ pub struct TextEditor {
 impl TextEditor {
     pub fn new() -> Self {
         Self {
-            buffer: String::new(),
+            buffer: Vec::new(),
             cursor: 0,
             history: Vec::new(),
             history_pos: None,
@@ -26,7 +26,12 @@ impl TextEditor {
     }
 
     pub fn lines(&self) -> Vec<String> {
-        self.buffer.lines().map(|s| s.to_string()).collect()
+        let s: String = self.buffer.iter().collect();
+        s.lines().map(|s| s.to_string()).collect()
+    }
+
+    fn buffer_string(&self) -> String {
+        self.buffer.iter().collect()
     }
 
     pub fn input(&mut self, key: KeyEvent) -> bool {
@@ -93,14 +98,15 @@ impl TextEditor {
     }
 
     pub fn submit(&mut self) -> String {
-        let input = self.buffer.trim().to_string();
-        if !input.is_empty() {
-            self.history.push(input.clone());
+        let input = self.buffer_string();
+        let trimmed = input.trim().to_string();
+        if !trimmed.is_empty() {
+            self.history.push(trimmed.clone());
         }
         self.buffer.clear();
         self.cursor = 0;
         self.history_pos = None;
-        input
+        trimmed
     }
 
     pub fn history_up(&mut self) {
@@ -111,7 +117,7 @@ impl TextEditor {
         if pos > 0 {
             let new_pos = pos - 1;
             self.history_pos = Some(new_pos);
-            self.buffer = self.history[new_pos].clone();
+            self.buffer = self.history[new_pos].chars().collect();
             self.cursor = self.buffer.len();
         }
     }
@@ -121,7 +127,7 @@ impl TextEditor {
             Some(p) if p < self.history.len() - 1 => {
                 let new_pos = p + 1;
                 self.history_pos = Some(new_pos);
-                self.buffer = self.history[new_pos].clone();
+                self.buffer = self.history[new_pos].chars().collect();
                 self.cursor = self.buffer.len();
             }
             _ => {
@@ -138,8 +144,10 @@ impl TextEditor {
     }
 
     pub fn insert_str(&mut self, s: &str) {
-        self.buffer.insert_str(self.cursor, s);
-        self.cursor += s.len();
+        for c in s.chars() {
+            self.buffer.insert(self.cursor, c);
+            self.cursor += 1;
+        }
     }
 
     /// Render the editor content into the provided buffer area.
@@ -150,15 +158,14 @@ impl TextEditor {
         let text_style = Style::new().fg(Color::WHITE);
         let border_style = Style::new().fg(Color::DARK_GRAY);
 
-        let prompt_len = self.prompt.len();
+        let prompt_len = self.prompt.chars().count();
         let usable = width.saturating_sub(prompt_len).saturating_sub(1);
-        let buf_chars: Vec<char> = self.buffer.chars().collect();
 
         let mut char_idx = 0;
         let mut first_line = true;
         let mut y = area.y;
 
-        while char_idx <= buf_chars.len() {
+        while char_idx <= self.buffer.len() {
             if y >= area.y + area.height {
                 break;
             }
@@ -176,8 +183,8 @@ impl TextEditor {
             }
 
             let mut hit_newline = false;
-            while line_len < capacity && char_idx <= buf_chars.len() && cx < area.x + area.width {
-                if char_idx == buf_chars.len() {
+            while line_len < capacity && char_idx <= self.buffer.len() && cx < area.x + area.width {
+                if char_idx == self.buffer.len() {
                     if char_idx == self.cursor {
                         buf.put_char(cx, y, ' ', cursor_style);
                     }
@@ -185,7 +192,7 @@ impl TextEditor {
                     break;
                 }
 
-                let c = buf_chars[char_idx];
+                let c = self.buffer[char_idx];
                 if c == '\n' {
                     if char_idx == self.cursor {
                         buf.put_char(cx, y, '\u{21B5}', cursor_style);
@@ -202,8 +209,9 @@ impl TextEditor {
                 } else {
                     buf.put_char(cx, y, c, text_style);
                 }
-                line_len += 1;
-                cx += 1;
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as usize;
+                line_len += w;
+                cx += w as u16;
                 char_idx += 1;
             }
 
@@ -211,7 +219,7 @@ impl TextEditor {
                 y += 1;
                 continue;
             }
-            if char_idx >= buf_chars.len() {
+            if char_idx >= self.buffer.len() {
                 break;
             }
             y += 1;
@@ -234,6 +242,87 @@ impl TextEditor {
             }
         }
     }
+
+    /// Render with theme colors (used by TUI input area).
+    pub fn render_into(&self, buf: &mut CellBuffer, area: Rect, theme: &crate::styling::Theme) {
+        let width = area.width as usize;
+        let prompt_style = Style::new().fg(theme.primary).bg(theme.background_panel);
+        let cursor_style = Style::new().fg(theme.background).bg(theme.primary);
+        let text_style = Style::new().fg(theme.text).bg(theme.background_panel);
+
+        let prompt_len = self.prompt.chars().count();
+        let usable = width.saturating_sub(prompt_len).saturating_sub(1);
+
+        let mut char_idx = 0;
+        let mut first_line = true;
+        let mut y = area.y;
+
+        while char_idx <= self.buffer.len() {
+            if y >= area.y + area.height {
+                break;
+            }
+
+            let capacity = if first_line { usable } else { width.saturating_sub(1) };
+            first_line = false;
+
+            let mut cx = area.x;
+            let mut line_len = 0;
+
+            if char_idx == 0 {
+                buf.draw_str(cx, y, &self.prompt, prompt_style);
+                cx += prompt_len as u16;
+                line_len += prompt_len;
+            }
+
+            let mut hit_newline = false;
+            while line_len < capacity && char_idx <= self.buffer.len() && cx < area.x + area.width {
+                if char_idx == self.buffer.len() {
+                    if char_idx == self.cursor {
+                        buf.put_char(cx, y, ' ', cursor_style);
+                    }
+                    char_idx += 1;
+                    break;
+                }
+
+                let c = self.buffer[char_idx];
+                if c == '\n' {
+                    if char_idx == self.cursor {
+                        buf.put_char(cx, y, '\u{21B5}', cursor_style);
+                    } else {
+                        buf.put_char(cx, y, '\u{21B5}', text_style);
+                    }
+                    char_idx += 1;
+                    hit_newline = true;
+                    break;
+                }
+
+                if char_idx == self.cursor {
+                    buf.put_char(cx, y, c, cursor_style);
+                } else {
+                    buf.put_char(cx, y, c, text_style);
+                }
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as usize;
+                line_len += w;
+                cx += w as u16;
+                char_idx += 1;
+            }
+
+            if hit_newline {
+                y += 1;
+                continue;
+            }
+            if char_idx >= self.buffer.len() {
+                break;
+            }
+            y += 1;
+        }
+
+        // Empty buffer: show prompt + cursor
+        if self.buffer.is_empty() && y < area.y + area.height {
+            buf.draw_str(area.x, y, &self.prompt, prompt_style);
+            buf.put_char(area.x + prompt_len as u16, y, ' ', cursor_style);
+        }
+    }
 }
 
 impl Default for TextEditor {
@@ -247,6 +336,11 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    /// Helper: convert `Vec<char>` to `String` for comparison in assertions.
+    fn buf_str(ed: &TextEditor) -> String {
+        ed.buffer.iter().collect()
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -258,7 +352,7 @@ mod tests {
     #[test]
     fn test_new_editor_empty() {
         let ed = TextEditor::new();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
         assert_eq!(ed.cursor, 0);
         assert!(ed.lines().is_empty());
     }
@@ -267,7 +361,7 @@ mod tests {
     fn test_insert_char() {
         let mut ed = TextEditor::new();
         ed.input(char_key('a'));
-        assert_eq!(ed.buffer, "a");
+        assert_eq!(buf_str(&ed), "a");
         assert_eq!(ed.cursor, 1);
     }
 
@@ -279,7 +373,7 @@ mod tests {
         ed.input(char_key('l'));
         ed.input(char_key('l'));
         ed.input(char_key('o'));
-        assert_eq!(ed.buffer, "hello");
+        assert_eq!(buf_str(&ed), "hello");
         assert_eq!(ed.cursor, 5);
     }
 
@@ -290,7 +384,7 @@ mod tests {
         ed.input(char_key('c'));
         ed.input(key(KeyCode::Left));
         ed.input(char_key('b'));
-        assert_eq!(ed.buffer, "abc");
+        assert_eq!(buf_str(&ed), "abc");
         assert_eq!(ed.cursor, 2);
     }
 
@@ -301,7 +395,7 @@ mod tests {
         ed.input(char_key('b'));
         ed.input(char_key('c'));
         ed.input(key(KeyCode::Backspace));
-        assert_eq!(ed.buffer, "ab");
+        assert_eq!(buf_str(&ed), "ab");
         assert_eq!(ed.cursor, 2);
     }
 
@@ -309,7 +403,7 @@ mod tests {
     fn test_backspace_at_start() {
         let mut ed = TextEditor::new();
         ed.input(key(KeyCode::Backspace));
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
         assert_eq!(ed.cursor, 0);
     }
 
@@ -322,7 +416,7 @@ mod tests {
         ed.input(key(KeyCode::Left));
         ed.input(key(KeyCode::Left));
         ed.input(key(KeyCode::Delete));
-        assert_eq!(ed.buffer, "ac");
+        assert_eq!(buf_str(&ed), "ac");
     }
 
     #[test]
@@ -365,7 +459,7 @@ mod tests {
         ed.input(char_key('s'));
         ed.input(char_key('t'));
         assert_eq!(ed.submit(), "test");
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
         assert_eq!(ed.cursor, 0);
     }
 
@@ -387,27 +481,27 @@ mod tests {
         ed.submit();
 
         ed.history_up();
-        assert_eq!(ed.buffer, "b");
+        assert_eq!(buf_str(&ed), "b");
         ed.history_up();
-        assert_eq!(ed.buffer, "a");
+        assert_eq!(buf_str(&ed), "a");
         ed.history_down();
-        assert_eq!(ed.buffer, "b");
+        assert_eq!(buf_str(&ed), "b");
         ed.history_down();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
     }
 
     #[test]
     fn test_history_up_empty() {
         let mut ed = TextEditor::new();
         ed.history_up();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
     }
 
     #[test]
     fn test_history_down_from_start() {
         let mut ed = TextEditor::new();
         ed.history_down();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
     }
 
     #[test]
@@ -416,7 +510,7 @@ mod tests {
         ed.input(char_key('a'));
         ed.input(char_key('b'));
         ed.delete_line_by_head();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
         assert_eq!(ed.cursor, 0);
     }
 
@@ -424,7 +518,7 @@ mod tests {
     fn test_insert_str() {
         let mut ed = TextEditor::new();
         ed.insert_str("hello");
-        assert_eq!(ed.buffer, "hello");
+        assert_eq!(buf_str(&ed), "hello");
         assert_eq!(ed.cursor, 5);
     }
 
@@ -434,7 +528,7 @@ mod tests {
         ed.insert_str("ac");
         ed.input(key(KeyCode::Left));
         ed.insert_str("b");
-        assert_eq!(ed.buffer, "abc");
+        assert_eq!(buf_str(&ed), "abc");
     }
 
     #[test]
@@ -499,11 +593,11 @@ mod tests {
         ed.insert_str("second"); ed.submit();
         ed.insert_str("third"); ed.submit();
         ed.history_up();
-        assert_eq!(ed.buffer, "third");
+        assert_eq!(buf_str(&ed), "third");
         ed.history_up();
-        assert_eq!(ed.buffer, "second");
+        assert_eq!(buf_str(&ed), "second");
         ed.history_up();
-        assert_eq!(ed.buffer, "first");
+        assert_eq!(buf_str(&ed), "first");
     }
 
     #[test]
@@ -522,7 +616,7 @@ mod tests {
         ed.input(key(KeyCode::Left));
         ed.input(key(KeyCode::Left));
         ed.input(key(KeyCode::Backspace));
-        assert_eq!(ed.buffer, "ab");
+        assert_eq!(buf_str(&ed), "ab");
     }
 
     #[test]
@@ -530,7 +624,7 @@ mod tests {
         let mut ed = TextEditor::new();
         ed.insert_str("abc");
         ed.input(key(KeyCode::Delete));
-        assert_eq!(ed.buffer, "abc");
+        assert_eq!(buf_str(&ed), "abc");
     }
 
     #[test]
@@ -539,7 +633,7 @@ mod tests {
         ed.insert_str("ac");
         ed.input(key(KeyCode::Left));
         ed.input(char_key('b'));
-        assert_eq!(ed.buffer, "abc");
+        assert_eq!(buf_str(&ed), "abc");
         assert_eq!(ed.cursor, 2);
     }
 
@@ -547,14 +641,14 @@ mod tests {
     fn test_history_up_on_empty_history() {
         let mut ed = TextEditor::new();
         ed.history_up();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
     }
 
     #[test]
     fn test_history_down_on_empty_history() {
         let mut ed = TextEditor::new();
         ed.history_down();
-        assert_eq!(ed.buffer, "");
+        assert_eq!(buf_str(&ed), "");
     }
 
     #[test]

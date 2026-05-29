@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -78,62 +78,69 @@ class TestFindSimilar:
 
 
 class TestVerifyAndRollback:
-    def test_returns_none_for_missing_skill(self, engine):
+    @pytest.mark.asyncio
+    async def test_returns_none_for_missing_skill(self, engine):
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = engine.verify_and_rollback("nonexistent", "verify prompt")
+            result = await engine.verify_and_rollback("nonexistent", "verify prompt", llm=MagicMock())
             assert result is None
 
-    def test_verify_passed_returns_skill(self, engine):
+    @pytest.mark.asyncio
+    async def test_verify_passed_returns_skill(self, engine):
         engine.create(name="test-skill", description="desc", steps=["a"], verification="check x")
 
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = engine.verify_and_rollback("test-skill", "verify prompt")
+            result = await engine.verify_and_rollback("test-skill", "verify prompt", llm=MagicMock())
             assert result is not None
             assert result["name"] == "test-skill"
 
-    def test_verify_failed_rolls_back(self, engine):
+    @pytest.mark.asyncio
+    async def test_verify_failed_rolls_back(self, engine):
         engine.create(name="rollback-skill", description="v1", steps=["step 1"], verification="check 1")
         engine.patch("rollback-skill", {"description": "v2", "steps": ["step 2"]})
 
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": False, "fail_reason": "broken"}
-            result = engine.verify_and_rollback("rollback-skill", "verify prompt")
+            result = await engine.verify_and_rollback("rollback-skill", "verify prompt", llm=MagicMock())
 
         assert result is not None
         assert result["description"] == "v1"
         assert result["steps"] == ["step 1"]
 
-    def test_verify_failed_no_history_returns_none(self, engine):
+    @pytest.mark.asyncio
+    async def test_verify_failed_no_history_returns_none(self, engine):
         engine.create(name="new-skill", description="v1", steps=["step 1"])
 
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": False, "fail_reason": "broken"}
-            result = engine.verify_and_rollback("new-skill", "verify prompt")
+            result = await engine.verify_and_rollback("new-skill", "verify prompt", llm=MagicMock())
 
         assert result is None
 
-    def test_pass_screenshot_to_verify(self, engine):
+    @pytest.mark.asyncio
+    async def test_pass_screenshot_to_verify(self, engine):
         engine.create(name="ss-skill", description="desc", steps=["a"])
 
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = engine.verify_and_rollback(
+            result = await engine.verify_and_rollback(
                 "ss-skill",
                 "verify prompt",
+                llm=MagicMock(),
                 screenshot_path="/tmp/test.png",
                 dom_snapshot="<html></html>",
             )
             assert result is not None
 
-    def test_verify_failed_keeps_reason(self, engine):
+    @pytest.mark.asyncio
+    async def test_verify_failed_keeps_reason(self, engine):
         engine.create(name="fail-skill", description="v1", steps=["a"], verification="x")
         engine.patch("fail-skill", {"steps": ["b"]})
 
         with patch("sediman.skills.healer.verify_skill") as mock_verify:
             mock_verify.return_value = {"passed": False, "fail_reason": "element not found"}
-            result = engine.verify_and_rollback("fail-skill", "verify prompt")
+            result = await engine.verify_and_rollback("fail-skill", "verify prompt", llm=MagicMock())
 
         assert result is not None
         assert result["description"] == "v1"

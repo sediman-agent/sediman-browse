@@ -21,27 +21,7 @@ pub struct Command {
     pub aliases: &'static [&'static str],
     pub description: &'static str,
     pub category: CommandCategory,
-    pub handler: fn(&AppContext, &str) -> Box<dyn std::future::Future<Output = ()> + Send>,
 }
-
-/// Wrapper around a raw pointer to the TUI App.
-/// The pointer is only accessed from the main thread under controlled
-/// conditions (event loop dispatch). Send/Sync are safe because:
-/// - The App is pinned and lives for the duration of the program.
-/// - All accesses happen on the same thread (single-threaded event loop).
-/// - The raw pointer is never dereferenced from another thread.
-pub struct AppContext {
-    pub app: *mut std::ffi::c_void,
-}
-
-/// SAFETY: AppContext is only used on the main thread. The raw pointer is
-/// never sent across threads for dereferencing, only passed through channels
-/// back to the main thread for handling.
-unsafe impl Send for AppContext {}
-
-/// SAFETY: Same as Send — shared references to AppContext are only used
-/// on the main thread where the App is valid.
-unsafe impl Sync for AppContext {}
 
 pub struct CommandRegistry {
     commands: HashMap<&'static str, &'static Command>,
@@ -100,7 +80,6 @@ mod tests {
         aliases: &["/h", "/?"],
         description: "Show help",
         category: CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_SKILLS: Command = Command {
@@ -108,7 +87,6 @@ mod tests {
         aliases: &["/skill list"],
         description: "List skills",
         category: CommandCategory::Skills,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     static CMD_EXIT: Command = Command {
@@ -116,7 +94,6 @@ mod tests {
         aliases: &["/quit"],
         description: "Exit",
         category: CommandCategory::General,
-        handler: |_, _| Box::new(std::future::ready(())),
     };
 
     fn setup() -> CommandRegistry {

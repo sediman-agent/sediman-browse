@@ -125,7 +125,8 @@ impl GpuRenderer {
         let h = size.height.max(1);
 
         let instance = Instance::new(&InstanceDescriptor::default());
-        let surface = instance.create_surface(Arc::clone(&window)).unwrap();
+        let surface = instance.create_surface(Arc::clone(&window))
+            .expect("Failed to create GPU surface — no compatible display available");
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -134,7 +135,7 @@ impl GpuRenderer {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("Failed to get GPU adapter");
+            .expect("Failed to get GPU adapter — no compatible GPU found");
 
         let (device, queue) = adapter
             .request_device(
@@ -147,7 +148,7 @@ impl GpuRenderer {
                 None,
             )
             .await
-            .expect("Failed to get GPU device");
+            .expect("Failed to get GPU device — driver issue or insufficient resources");
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -396,6 +397,32 @@ impl GpuRenderer {
 
             if change.cell.ch != ' ' && change.cell.ch != '\0' {
                 let glyph = self.atlas.get_or_default(change.cell.ch);
+                if let Some((rx, ry, rw, rh)) = self.atlas.take_dirty_rect() {
+                    let row_bytes = self.atlas.width as usize * 4;
+                    let sub_data: Vec<u8> = (ry..rh).flat_map(|row| {
+                        let start = (row as usize * row_bytes) + (rx as usize * 4);
+                        self.atlas.pixels[start..start + (rw - rx) as usize * 4].iter().copied()
+                    }).collect();
+                    self.queue.write_texture(
+                        TexelCopyTextureInfo {
+                            texture: &self.glyph_texture,
+                            mip_level: 0,
+                            origin: Origin3d { x: rx, y: ry, z: 0 },
+                            aspect: TextureAspect::All,
+                        },
+                        &sub_data,
+                        TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some((rw - rx) * 4),
+                            rows_per_image: Some(rh - ry),
+                        },
+                        Extent3d {
+                            width: rw - rx,
+                            height: rh - ry,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
                 let base = vertices.len() as u32;
                 vertices.extend_from_slice(&[
                     GpuVertex { pos: [x0, y0], uv: [glyph.u0, glyph.v0], fg, bg, flags: 1.0 },
@@ -413,6 +440,11 @@ impl GpuRenderer {
         let idx_bytes = bytemuck::cast_slice(&indices);
 
         if !vertices.is_empty() {
+            let vert_count = vertices.len() as u64;
+            let idx_count = indices.len() as u64;
+            if vert_count > MAX_VERTICES || idx_count > MAX_INDICES {
+                return Ok(());
+            }
             self.queue.write_buffer(&self.vertex_buf, 0, vert_bytes);
             self.queue.write_buffer(&self.index_buf, 0, idx_bytes);
         }

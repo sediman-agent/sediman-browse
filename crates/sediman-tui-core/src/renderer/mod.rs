@@ -14,6 +14,17 @@ pub use buffer::{CellBuffer, Rect};
 pub use diff::{DiffEngine, Change};
 pub use ansi::AnsiWriter;
 
+pub fn display_width(s: &str) -> u16 {
+    unicode_width::UnicodeWidthStr::width(s) as u16
+}
+
+pub fn truncate_str(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Span {
     pub text: String,
@@ -55,8 +66,16 @@ impl Line {
     pub fn render(&self, buf: &mut CellBuffer, mut x: u16, y: u16) -> u16 {
         for span in &self.spans {
             for ch in span.text.chars() {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+                if w == 0 { continue; }
                 buf.put_char(x, y, ch, span.style);
                 x += 1;
+                for _ in 1..w {
+                    if let Some(c) = buf.get_mut(x, y) {
+                        c.skip = true;
+                    }
+                    x += 1;
+                }
             }
         }
         x
@@ -212,5 +231,70 @@ mod tests {
         let a = Span::raw("x");
         let b = Span::raw("x");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_display_width_ascii() {
+        assert_eq!(display_width("hello"), 5);
+        assert_eq!(display_width(""), 0);
+    }
+
+    #[test]
+    fn test_display_width_unicode() {
+        assert_eq!(display_width("\u{25c6}"), 1);
+        assert_eq!(display_width("\u{25cf} sediman"), 9);
+        assert_eq!(display_width("\u{25b8} Skills"), 8);
+    }
+
+    #[test]
+    fn test_truncate_str_short() {
+        assert_eq!(truncate_str("hi", 10), "hi");
+    }
+
+    #[test]
+    fn test_truncate_str_exact() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_truncates() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_unicode() {
+        assert_eq!(truncate_str("\u{25c6}\u{25c7}\u{25c8}", 2), "\u{25c6}\u{25c7}");
+    }
+
+    #[test]
+    fn test_truncate_str_empty() {
+        assert_eq!(truncate_str("", 5), "");
+    }
+
+    #[test]
+    fn test_display_width_empty() {
+        assert_eq!(display_width(""), 0);
+    }
+
+    #[test]
+    fn test_display_width_control_chars() {
+        assert_eq!(display_width("\x00\x01\x02"), 3);
+    }
+
+    #[test]
+    fn test_display_width_long_string() {
+        let s: String = "a".repeat(1000);
+        assert_eq!(display_width(&s), 1000);
+    }
+
+    #[test]
+    fn test_truncate_str_zero() {
+        assert_eq!(truncate_str("hello", 0), "");
+    }
+
+    #[test]
+    fn test_truncate_str_multi_byte_boundary() {
+        let s = "a\u{00e9}b\u{00e9}c"; // "aébéc"
+        assert_eq!(truncate_str(s, 3), "a\u{00e9}b");
     }
 }

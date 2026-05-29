@@ -48,7 +48,6 @@ pub static CMD_BROWSER: Command = Command {
     aliases: &[],
     description: "Show or switch browser mode: /browser [headless|headed]",
     category: CommandCategory::Browser,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_SCREENSHOT: Command = Command {
@@ -56,5 +55,4 @@ pub static CMD_SCREENSHOT: Command = Command {
     aliases: &[],
     description: "Take a browser screenshot and save it",
     category: CommandCategory::Browser,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

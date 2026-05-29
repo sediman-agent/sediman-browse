@@ -22,6 +22,19 @@ jobs:
       - name: Run Python tests
         run: uv run pytest -x -q
 
+  typescript:
+    name: TypeScript tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Run TypeScript tests
+        run: bun test
+
   rust:
     name: Rust TUI
     runs-on: ubuntu-latest

@@ -4,11 +4,6 @@ import { createServer as createTCPServer, type Socket } from "node:net"
 import { MAIN_SOCKET } from "./config.js"
 import { registerAll, dispatch } from "./transport.js"
 import { loadSoul, saveSoul, resetSoul } from "./soul.js"
-import { handleSkillsList, handleSkillsGet, handleSkillsCreate, handleSkillsDelete, type CreateSkillParams } from "./modules/skills.js"
-import { handleHubBrowse, handleHubSearch, handleHubInfo, handleHubInstall } from "./modules/hub.js"
-import { handleScheduleList, handleScheduleAdd, handleScheduleRemove } from "./modules/schedule.js"
-import { handleMemoryGet, handleMemoryAdd } from "./modules/memory.js"
-import { handleSessionsList } from "./modules/sessions.js"
 
 registerAll({
   "system.btw": async () => {
@@ -29,27 +24,23 @@ registerAll({
   "soul.load": async () => ({ content: loadSoul() }),
   "soul.save": async (params) => { saveSoul(String(params.content)); return {} },
   "soul.reset": async () => { resetSoul(); return {} },
-  "skills.list": async () => handleSkillsList(),
-  "skills.get": async (params) => handleSkillsGet({ name: String(params.name || "") }),
-  "skills.create": async (params) => handleSkillsCreate(params as unknown as CreateSkillParams),
-  "skills.delete": async (params) => handleSkillsDelete({ name: String(params.name || "") }),
-  "schedule.list": async () => handleScheduleList(),
-  "schedule.add": async (params) => handleScheduleAdd({
-    cron: String(params.cron || ""),
-    task: String(params.task || ""),
-    skill: params.skill ? String(params.skill) : undefined,
-  }),
-  "schedule.remove": async (params) => handleScheduleRemove({ job_id: String(params.job_id || "") }),
-  "memory.get": async () => handleMemoryGet(),
-  "memory.add": async (params) => handleMemoryAdd({
-    target: String(params.target || "memory"),
-    content: String(params.content || ""),
-  }),
-  "sessions.list": async () => handleSessionsList(),
-  "hub.browse": async (params) => handleHubBrowse({ category: params.category ? String(params.category) : undefined }),
-  "hub.search": async (params) => handleHubSearch({ query: String(params.query || "") }),
-  "hub.info": async (params) => handleHubInfo({ name: String(params.name || "") }),
-  "hub.install": async (params) => handleHubInstall({ name: String(params.name || ""), force: Boolean(params.force) }),
+
+  // Hub/memory/sessions/schedule/skills are now proxied to Python backend.
+  // This standalone server does not support them without Python running.
+  "hub.browse": async () => { throw new Error("Hub requires Python backend") },
+  "hub.search": async () => { throw new Error("Hub requires Python backend") },
+  "hub.info": async () => { throw new Error("Hub requires Python backend") },
+  "hub.install": async () => { throw new Error("Hub requires Python backend") },
+  "skills.list": async () => { throw new Error("Skills require Python backend") },
+  "skills.get": async () => { throw new Error("Skills require Python backend") },
+  "skills.create": async () => { throw new Error("Skills require Python backend") },
+  "skills.delete": async () => { throw new Error("Skills require Python backend") },
+  "schedule.list": async () => { throw new Error("Schedule requires Python backend") },
+  "schedule.add": async () => { throw new Error("Schedule requires Python backend") },
+  "schedule.remove": async () => { throw new Error("Schedule requires Python backend") },
+  "memory.get": async () => { throw new Error("Memory requires Python backend") },
+  "memory.add": async () => { throw new Error("Memory requires Python backend") },
+  "sessions.list": async () => { throw new Error("Sessions require Python backend") },
 })
 
 const SOCKET = process.env.SEDIMAN_MAIN_SOCKET || MAIN_SOCKET

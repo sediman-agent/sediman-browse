@@ -11,12 +11,7 @@ import structlog
 
 from sediman.config import TRAJECTORIES_DIR
 from sediman.memory.vector import VectorStore
-from sediman.store.db import get_db_path
-
-try:
-    import aiosqlite
-except ImportError:
-    aiosqlite = None
+from sediman.store.db import get_connection, get_db_path
 
 logger = structlog.get_logger()
 
@@ -58,8 +53,7 @@ class TrajectoryDB:
 
     async def save(self, traj: Trajectory) -> str:
         TRAJECTORIES_DIR.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             await db.execute(
                 """INSERT OR REPLACE INTO trajectories
                    (id, task, steps_json, result, success, skill_name,
@@ -116,8 +110,7 @@ class TrajectoryDB:
             logger.debug("trajectory_index_failed", id=traj.id, error=str(e))
 
     async def get(self, traj_id: str) -> Trajectory | None:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             cursor = await db.execute(
                 "SELECT * FROM trajectories WHERE id = ?", (traj_id,)
             )
@@ -163,8 +156,7 @@ class TrajectoryDB:
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             rows = await db.execute_fetchall(
                 f"""SELECT * FROM trajectories
                 WHERE id IN ({placeholders})
@@ -181,8 +173,7 @@ class TrajectoryDB:
         limit: int,
         min_success_rate: float,
     ) -> list[Trajectory]:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             rows = await db.execute_fetchall(
                 """SELECT *, (SELECT AVG(rating) FROM trajectory_preferences
                     WHERE trajectory_id = t.id) as avg_rating
@@ -199,8 +190,7 @@ class TrajectoryDB:
         limit: int = 10,
         skill_name: str | None = None,
     ) -> list[Trajectory]:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             if skill_name:
                 rows = await db.execute_fetchall(
                     """SELECT * FROM trajectories
@@ -222,8 +212,7 @@ class TrajectoryDB:
         skill_name: str,
         limit: int = 20,
     ) -> list[Trajectory]:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             rows = await db.execute_fetchall(
                 """SELECT * FROM trajectories
                 WHERE skill_name = ?
@@ -240,7 +229,7 @@ class TrajectoryDB:
     ) -> None:
         if rating not in (-1, 0, 1):
             raise ValueError("Rating must be -1, 0, or 1")
-        async with aiosqlite.connect(self._db_path) as db:
+        async with get_connection() as db:
             await db.execute(
                 """INSERT INTO trajectory_preferences (trajectory_id, rating, feedback)
                    VALUES (?, ?, ?)""",
@@ -250,7 +239,7 @@ class TrajectoryDB:
         logger.info("trajectory_rated", id=traj_id, rating=rating)
 
     async def get_skill_success_rate(self, skill_name: str) -> float:
-        async with aiosqlite.connect(self._db_path) as db:
+        async with get_connection() as db:
             cursor = await db.execute(
                 """SELECT
                     COUNT(*) as total,
@@ -268,8 +257,7 @@ class TrajectoryDB:
         min_trajectories: int = 3,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             rows = await db.execute_fetchall(
                 """SELECT
                     t.skill_name,
@@ -291,8 +279,7 @@ class TrajectoryDB:
         self,
         limit: int = 10,
     ) -> list[Trajectory]:
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_connection() as db:
             rows = await db.execute_fetchall(
                 """SELECT * FROM trajectories t
                 WHERE NOT EXISTS (

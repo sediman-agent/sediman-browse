@@ -56,3 +56,11 @@ Cargo.lock
 a.md
 
 app/
+
+# Benchmark suite (not yet published - hidden)
+benchmarks/skill_generalization/mock_server/pages/
+benchmarks/skill_generalization/results/
+benchmarks/skill_generalization/recordings/
+benchmarks/skill_generalization/skills/
+*.benchmark_results.jsonl
+*.benchmark_report.html

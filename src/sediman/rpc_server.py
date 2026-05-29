@@ -21,6 +21,41 @@ from typing import Any, Callable
 import structlog
 
 from sediman.agent.interrupt import InterruptSignal
+
+_sentry_initialized = False
+
+
+def _init_sentry() -> None:
+    global _sentry_initialized
+    if _sentry_initialized:
+        return
+    dsn = os.environ.get("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            profiles_sample_rate=float(os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.05")),
+        )
+        _sentry_initialized = True
+        logger.info("sentry_initialized", environment=os.environ.get("SENTRY_ENVIRONMENT", "production"))
+    except ImportError:
+        logger.debug("sentry_sdk_not_installed")
+    except Exception as e:
+        logger.warning("sentry_init_failed", error=str(e))
+
+
+def _capture_exception(exc: Exception) -> None:
+    if not _sentry_initialized:
+        return
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
 from sediman.agent.loop import AgentLoop, AgentResult, StepEvent
 from sediman.browser.session import BrowserSession
 from sediman.llm.provider import create_provider, LLMProvider, PROVIDERS
@@ -59,7 +94,8 @@ def init_state(
 def _get_llm() -> LLMProvider:
     global _llm
     if _llm is None:
-        _llm = create_provider(**_llm_config)
+        cfg = {k: v for k, v in _llm_config.items() if k != "terminal"}
+        _llm = create_provider(**cfg)
     return _llm
 
 
@@ -71,7 +107,7 @@ async def _get_browser() -> BrowserSession:
                 from sediman.config import STEALTH_ENABLED, STEALTH_PROXY
 
                 _browser = BrowserSession(
-                    headless=False,
+                    headless=True,
                     stealth=STEALTH_ENABLED,
                     proxy=STEALTH_PROXY or None,
                 )
@@ -144,7 +180,7 @@ async def handle_system_btw(params: dict[str, Any], notify: NotifyFn | None = No
         raise ValueError("question is required")
     from sediman.llm.provider import create_provider
 
-    llm = create_provider(**_llm_config)
+    llm = create_provider(**{k: v for k, v in _llm_config.items() if k != "terminal"})
     system_msg = {"role": "system", "content": "You are a helpful assistant. Answer concisely."}
     msg = {"role": "user", "content": question}
     response = await llm.chat(messages=[system_msg, msg], tools=[])
@@ -194,7 +230,9 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
         result: AgentResult = await agent.run(task)
     except InterruptedError:
         return {
+            "task": task,
             "result": "Task cancelled by user.",
+            "success": False,
             "steps": [],
             "skill_created": None,
             "elapsed_secs": 0,
@@ -205,7 +243,9 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
             agent.on_step = original_on_step if notify else agent.on_step
 
     return {
+        "task": task,
         "result": result.result or "",
+        "success": True,
         "steps": [{"action": s.action, "observation": s.observation, "phase": s.phase} for s in (result.steps or [])],
         "skill_created": result.skill_created,
         "actions_taken": result.actions_taken or [],
@@ -371,6 +411,376 @@ async def handle_integration_status(params: dict[str, Any], notify: NotifyFn | N
     }
 
 
+# ── Hub ─────────────────────────────────────────────────────────────
+
+async def handle_hub_browse(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    from sediman.skills.hub import HubClient
+    hub = HubClient()
+    category = params.get("category")
+    results = hub.browse(category=category if category else None)
+    return [
+        {
+            "name": s.name, "description": s.description,
+            "category": s.category, "author": s.author,
+            "version": s.version, "trust": s.trust,
+        }
+        for s in results
+    ]
+
+
+async def handle_hub_search(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    from sediman.skills.hub import HubClient
+    hub = HubClient()
+    query = (params.get("query") or "").strip()
+    if not query:
+        raise ValueError("query is required")
+    results = hub.search(query)
+    return [
+        {
+            "name": s.name, "description": s.description,
+            "category": s.category, "author": s.author,
+            "version": s.version, "trust": s.trust,
+        }
+        for s in results
+    ]
+
+
+async def handle_hub_info(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import HubClient
+    hub = HubClient()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    info = hub.info(name)
+    if not info:
+        raise ValueError(f"Skill '{name}' not found in hub")
+    return info
+
+
+async def handle_hub_install(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import HubClient
+    from sediman.skills.engine import SkillEngine
+    hub = HubClient()
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    force = bool(params.get("force", False))
+    success, message = hub.install(name, engine, force=force)
+    if not success:
+        raise ValueError(message)
+    return {"installed": name, "message": message}
+
+
+async def handle_hub_install_github(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import GitHubInstaller
+    from sediman.skills.engine import SkillEngine
+    installer = GitHubInstaller()
+    engine = SkillEngine()
+    ref = (params.get("ref") or "").strip()
+    if not ref:
+        raise ValueError("ref is required")
+    force = bool(params.get("force", False))
+    success, message = installer.install(ref, engine, force=force)
+    if not success:
+        raise ValueError(message)
+    return {"installed": ref, "message": message}
+
+
+async def handle_hub_check_update(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import GitHubInstaller
+    from sediman.skills.engine import SkillEngine
+    installer = GitHubInstaller()
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    has_update, message = installer.check_update(name, engine)
+    return {"hasUpdate": has_update, "message": message}
+
+
+async def handle_hub_update_skill(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import GitHubInstaller
+    from sediman.skills.engine import SkillEngine
+    installer = GitHubInstaller()
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    updated, message = installer.update_skill(name, engine)
+    return {"updated": updated, "message": message}
+
+
+async def handle_hub_remove(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.engine import SkillEngine
+    from sediman.skills.hub import SkillLockFile
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    engine = SkillEngine()
+    engine.delete(name)
+    lock = SkillLockFile()
+    lock.remove(name)
+    return {"removed": name}
+
+
+async def handle_hub_get_lock_info(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import SkillLockFile
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    lock = SkillLockFile()
+    entry = lock.get(name)
+    if not entry:
+        raise ValueError(f"No lock info for {name}")
+    return entry.to_json()
+
+
+# ── Memory ──────────────────────────────────────────────────────────
+
+async def handle_memory_get(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.store import MemoryStore
+    store = MemoryStore()
+    all_entries = store.get_all_entries()
+    mem_entries = all_entries.get("memory", [])
+    user_entries = all_entries.get("user", [])
+    return {
+        "entries": {
+            "memory": [{"content": e, "created_at": None} for e in mem_entries],
+            "user": [{"content": e, "created_at": None} for e in user_entries],
+        },
+        "memory": "\n".join(mem_entries),
+        "user": "\n".join(user_entries),
+        "memory_entries": len(mem_entries),
+        "user_entries": len(user_entries),
+    }
+
+
+async def handle_memory_add(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.manager import MemoryManager
+    mgr = MemoryManager()
+    await mgr.initialize()
+    target = (params.get("target") or "memory").strip()
+    content = (params.get("content") or "").strip()
+    if not content:
+        raise ValueError("content is required")
+    result = mgr._handle_memory_tool({"action": "add", "target": target, "content": content})
+    return {"success": True, "message": result}
+
+
+async def handle_memory_replace(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.manager import MemoryManager
+    mgr = MemoryManager()
+    await mgr.initialize()
+    target = (params.get("target") or "memory").strip()
+    content = (params.get("content") or "").strip()
+    old_entry = (params.get("old_entry") or "").strip()
+    if not content or not old_entry:
+        raise ValueError("content and old_entry are required")
+    result = mgr._handle_memory_tool({
+        "action": "replace", "target": target, "content": content, "old_entry": old_entry,
+    })
+    return {"success": True, "message": result}
+
+
+async def handle_memory_remove(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.manager import MemoryManager
+    mgr = MemoryManager()
+    await mgr.initialize()
+    target = (params.get("target") or "memory").strip()
+    content = (params.get("content") or "").strip()
+    if not content:
+        raise ValueError("content is required")
+    result = mgr._handle_memory_tool({
+        "action": "remove", "target": target, "old_entry": content,
+    })
+    return {"success": True, "message": result}
+
+
+async def handle_memory_search(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.manager import MemoryManager
+    mgr = MemoryManager()
+    await mgr.initialize()
+    query = (params.get("query") or "").strip()
+    limit = int(params.get("limit", 5))
+    if not query:
+        raise ValueError("query is required")
+    results = mgr.get_relevant_context(query, limit=limit)
+    return {"results": results}
+
+
+async def handle_memory_changelog(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.changelog import get_recent_changes
+    target = params.get("target")
+    limit = int(params.get("limit", 20))
+    changes = get_recent_changes(target=target, limit=limit)
+    return {
+        "changes": [
+            {
+                "action": c.action, "target": c.target,
+                "content": c.content, "reason": c.reason,
+                "timestamp": c.timestamp,
+            }
+            for c in changes
+        ],
+    }
+
+
+# ── Sessions ────────────────────────────────────────────────────────
+
+async def handle_sessions_list(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    from sediman.memory.sessions import get_recent_sessions
+    sessions = get_recent_sessions(limit=50)
+    return [
+        {"id": s["id"], "task": s["task"],
+         "result": s.get("result", ""), "created_at": s.get("created_at", "")}
+        for s in sessions
+    ]
+
+
+async def handle_sessions_search(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.sessions import search_sessions
+    query = (params.get("query") or "").strip()
+    if not query:
+        raise ValueError("query is required")
+    limit = int(params.get("limit", 20))
+    results = search_sessions(query, limit=limit)
+    return {"sessions": results}
+
+
+async def handle_sessions_save(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.sessions import save_session
+    task = (params.get("task") or "").strip()
+    if not task:
+        raise ValueError("task is required")
+    steps = params.get("steps", [])
+    result = params.get("result", "")
+    session_id = save_session(task, steps_json=json.dumps(steps), result=result)
+    return {"session_id": session_id}
+
+
+async def handle_sessions_get(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.sessions import get_session_by_id
+    session_id = (params.get("session_id") or "").strip()
+    if not session_id:
+        raise ValueError("session_id is required")
+    session = get_session_by_id(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+    return session
+
+
+# ── Schedule ────────────────────────────────────────────────────────
+
+async def handle_schedule_list(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    from sediman.scheduler.cron import CronManager
+    mgr = CronManager()
+    jobs = mgr.list_jobs()
+    return [
+        {
+            "id": j.get("id", ""), "task": j.get("task", ""),
+            "cron_expr": j.get("cron", ""),
+            "skill_name": j.get("skill_name"),
+            "enabled": j.get("enabled", True),
+            "last_run": j.get("last_run"),
+            "next_run": j.get("next_run"),
+        }
+        for j in jobs
+    ]
+
+
+async def handle_schedule_add(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.scheduler.cron import CronManager
+    mgr = CronManager()
+    cron = (params.get("cron") or "").strip()
+    task = (params.get("task") or "").strip()
+    if not cron or not task:
+        raise ValueError("cron and task are required")
+    skill = params.get("skill")
+    job_id = mgr.add_job(
+        cron=cron,
+        task=task,
+        skill_name=skill if skill else None,
+        enabled=True,
+    )
+    return {"job_id": job_id}
+
+
+async def handle_schedule_remove(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.scheduler.cron import CronManager
+    mgr = CronManager()
+    job_id = (params.get("job_id") or "").strip()
+    if not job_id:
+        raise ValueError("job_id is required")
+    mgr.remove_job(job_id)
+    return {"removed": job_id}
+
+
+# ── Skills CRUD ─────────────────────────────────────────────────────
+
+async def handle_skills_list(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    from sediman.skills.engine import SkillEngine
+    engine = SkillEngine()
+    skills = engine.list_skills()
+    return [
+        {
+            "name": s.get("name", ""), "description": s.get("description", ""),
+            "category": s.get("category"), "version": s.get("version", 1),
+        }
+        for s in skills
+    ]
+
+
+async def handle_skills_get(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.engine import SkillEngine
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    skill = engine.read(name)
+    if not skill:
+        raise ValueError(f"Skill '{name}' not found")
+    if hasattr(skill, "to_dict"):
+        return skill.to_dict()
+    return skill if isinstance(skill, dict) else {"name": name}
+
+
+async def handle_skills_create(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.engine import SkillEngine
+    from sediman.skills.format import SkillData
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    description = (params.get("description") or "").strip()
+    steps = params.get("steps", [])
+    if not name or not description:
+        raise ValueError("name and description are required")
+    if not isinstance(steps, list):
+        steps = []
+    skill_data = SkillData(
+        name=name,
+        description=description,
+        steps=steps,
+        category=params.get("category", "general"),
+        when_to_use=params.get("when_to_use"),
+        pitfalls=params.get("pitfalls", []),
+        verification=params.get("verification"),
+    )
+    engine.ensure_skill(name, skill_data)
+    if hasattr(skill_data, "to_dict"):
+        return skill_data.to_dict()
+    return {"name": name, "description": description}
+
+
+async def handle_skills_delete(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.engine import SkillEngine
+    engine = SkillEngine()
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    engine.delete(name)
+    return {"deleted": name}
+
+
 # ── Dispatching ────────────────────────────────────────────────────
 
 NotifyFn = Callable[[str, dict[str, Any]], None]
@@ -383,6 +793,32 @@ HANDLERS: dict[str, Callable] = {
     "agent.run": handle_agent_run,
     "agent.cancel": handle_agent_cancel,
     "skills.run": handle_skills_run,
+    "skills.list": handle_skills_list,
+    "skills.get": handle_skills_get,
+    "skills.create": handle_skills_create,
+    "skills.delete": handle_skills_delete,
+    "hub.browse": handle_hub_browse,
+    "hub.search": handle_hub_search,
+    "hub.info": handle_hub_info,
+    "hub.install": handle_hub_install,
+    "hub.install_github": handle_hub_install_github,
+    "hub.check_update": handle_hub_check_update,
+    "hub.update_skill": handle_hub_update_skill,
+    "hub.remove": handle_hub_remove,
+    "hub.get_lock_info": handle_hub_get_lock_info,
+    "memory.get": handle_memory_get,
+    "memory.add": handle_memory_add,
+    "memory.replace": handle_memory_replace,
+    "memory.remove": handle_memory_remove,
+    "memory.search": handle_memory_search,
+    "memory.changelog": handle_memory_changelog,
+    "sessions.list": handle_sessions_list,
+    "sessions.search": handle_sessions_search,
+    "sessions.save": handle_sessions_save,
+    "sessions.get": handle_sessions_get,
+    "schedule.list": handle_schedule_list,
+    "schedule.add": handle_schedule_add,
+    "schedule.remove": handle_schedule_remove,
     "model.switch": handle_model_switch,
     "model.list_providers": handle_model_list_providers,
     "terminal.set": handle_terminal_set,
@@ -422,6 +858,7 @@ async def dispatch_request(
             },
         }
     except Exception as e:
+        _capture_exception(e)
         logger.exception("handler_error", method=method)
         return _error(req_id, -32000, str(e))
 
@@ -467,39 +904,38 @@ async def handle_connection(
             pass
 
     try:
-        line = await reader.readline()
-        if not line:
-            return
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
 
-        try:
-            req = json.loads(line.decode())
-        except json.JSONDecodeError:
-            response = _error(None, -32700, "Parse error")
+            try:
+                req = json.loads(line.decode())
+            except json.JSONDecodeError:
+                response = _error(None, -32700, "Parse error")
+                writer.write((json.dumps(response) + "\n").encode())
+                await writer.drain()
+                continue
+
+            method = req.get("method", "")
+            params = req.get("params", {})
+            req_id = req.get("id")
+
+            if method == "agent.run":
+                cancel_task = asyncio.create_task(read_cancel())
+                try:
+                    response = await dispatch_request(method, params, req_id, _notify)
+                finally:
+                    cancel_task.cancel()
+                    try:
+                        await cancel_task
+                    except asyncio.CancelledError:
+                        pass
+            else:
+                response = await dispatch_request(method, params, req_id, None)
+
             writer.write((json.dumps(response) + "\n").encode())
             await writer.drain()
-            return
-
-        method = req.get("method", "")
-        params = req.get("params", {})
-        req_id = req.get("id")
-
-        if method == "agent.run":
-            # agent.run uses streaming — keep connection open,
-            # read for cancel in background
-            cancel_task = asyncio.create_task(read_cancel())
-            try:
-                response = await dispatch_request(method, params, req_id, _notify)
-            finally:
-                cancel_task.cancel()
-                try:
-                    await cancel_task
-                except asyncio.CancelledError:
-                    pass
-        else:
-            response = await dispatch_request(method, params, req_id, None)
-
-        writer.write((json.dumps(response) + "\n").encode())
-        await writer.drain()
 
     except Exception:
         logger.exception("connection_error")
@@ -535,6 +971,7 @@ def main() -> None:
     terminal = os.environ.get("SEDIMAN_TERMINAL", "").lower() in ("true", "1", "yes")
 
     init_state(provider=provider, model=model, base_url=base_url, terminal=terminal)
+    _init_sentry()
 
     from sediman.integrations import setup_integrations, start_listeners
     setup_integrations()

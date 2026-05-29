@@ -73,8 +73,9 @@ class MemoryManager:
     # ── Tool call routing ────────────────────────────────────────
 
     async def handle_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        import asyncio
         if tool_name == "memory":
-            return self._handle_memory_tool(arguments)
+            return await asyncio.to_thread(self._handle_memory_tool, arguments)
         return f"Unknown memory tool: {tool_name}"
 
     def _handle_memory_tool(self, arguments: dict[str, Any]) -> str:

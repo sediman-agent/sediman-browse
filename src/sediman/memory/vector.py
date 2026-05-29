@@ -38,6 +38,34 @@ CREATE INDEX IF NOT EXISTS idx_vectors_text ON vectors(text);
 CREATE INDEX IF NOT EXISTS idx_vectors_provider ON vectors(provider);
 """
 
+_VEC_META_SCHEMA = """
+CREATE TABLE IF NOT EXISTS vector_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'long_term',
+    channel TEXT NOT NULL DEFAULT 'declarative',
+    importance REAL NOT NULL DEFAULT 0.5,
+    source TEXT NOT NULL DEFAULT 'unknown',
+    created_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vec_meta_text ON vector_meta(text);
+CREATE INDEX IF NOT EXISTS idx_vec_meta_importance ON vector_meta(importance);
+"""
+
+_SQLITE_VEC_AVAILABLE: bool | None = None
+
+
+def _check_sqlite_vec() -> bool:
+    global _SQLITE_VEC_AVAILABLE
+    if _SQLITE_VEC_AVAILABLE is not None:
+        return _SQLITE_VEC_AVAILABLE
+    try:
+        import sqlite_vec
+        _SQLITE_VEC_AVAILABLE = True
+    except ImportError:
+        _SQLITE_VEC_AVAILABLE = False
+    return _SQLITE_VEC_AVAILABLE
+
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b:
@@ -96,6 +124,16 @@ class VectorStore:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-64000")
+
+        if _check_sqlite_vec():
+            try:
+                import sqlite_vec
+                conn.enable_load_extension(True)
+                sqlite_vec.load(conn)
+                conn.enable_load_extension(False)
+            except Exception:
+                pass
+
         return conn
 
     def _ensure_loaded(self) -> None:
@@ -109,6 +147,7 @@ class VectorStore:
             conn = self._get_conn()
             try:
                 conn.executescript(_VEC_SCHEMA)
+                conn.executescript(_VEC_META_SCHEMA)
                 conn.commit()
             finally:
                 conn.close()
@@ -296,8 +335,16 @@ class VectorStore:
                         "INSERT INTO vectors (text, vector, provider, metadata) VALUES (?, ?, ?, ?)",
                         (text, blob, self._provider_name or "unknown", meta_json),
                     )
+                    row_id = cursor.lastrowid
+                    importance = metadata.get("importance", 0.5) if metadata else 0.5
+                    channel = metadata.get("channel", "declarative") if metadata else "declarative"
+                    conn.execute(
+                        "INSERT OR REPLACE INTO vector_meta (text, tier, channel, importance, source) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (text, metadata.get("tier", "long_term"), channel, importance, self._provider_name or "unknown"),
+                    )
                     conn.commit()
-                    return cursor.lastrowid
+                    return row_id
                 finally:
                     conn.close()
             except sqlite3.IntegrityError:
@@ -316,12 +363,27 @@ class VectorStore:
         k: int,
         threshold: float,
     ) -> list[dict[str, Any]]:
+        if _check_sqlite_vec():
+            results = self._sql_search_native(query_vec, k, threshold)
+            if results is not None:
+                return results
+
+        SAMPLE_LIMIT = 500
         try:
             conn = self._get_conn()
             try:
-                rows = conn.execute(
-                    "SELECT id, text, vector, metadata FROM vectors"
-                ).fetchall()
+                row_count = conn.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+                if row_count <= SAMPLE_LIMIT:
+                    rows = conn.execute(
+                        "SELECT id, text, vector, metadata FROM vectors"
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT v.id, v.text, v.vector, v.metadata FROM vectors v "
+                        "LEFT JOIN vector_meta m ON v.text = m.text "
+                        "ORDER BY COALESCE(m.importance, 0.5) DESC, v.created_at DESC "
+                        "LIMIT ?", (SAMPLE_LIMIT,)
+                    ).fetchall()
             finally:
                 conn.close()
 
@@ -341,6 +403,39 @@ class VectorStore:
         except Exception as e:
             logger.debug("vector_sql_search_failed", error=str(e))
             return self._legacy_search_with_vec(query_vec, k, threshold)
+
+    def _sql_search_native(
+        self,
+        query_vec: list[float],
+        k: int,
+        threshold: float,
+    ) -> list[dict[str, Any]] | None:
+        try:
+            blob = _vec_to_blob(query_vec)
+            conn = self._get_conn()
+            try:
+                dim = len(query_vec)
+                rows = conn.execute(
+                    f"SELECT v.text, vec_distance_cosine(v.vector, ?) as distance, v.metadata "
+                    f"FROM vectors v "
+                    f"WHERE vec_distance_cosine(v.vector, ?) < ? "
+                    f"ORDER BY distance ASC LIMIT ?",
+                    (blob, blob, 1.0 - threshold, k),
+                ).fetchall()
+                results = []
+                for text, distance, meta_json in rows:
+                    try:
+                        meta = json.loads(meta_json) if meta_json else {}
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                    score = max(0.0, 1.0 - distance)
+                    results.append({"text": text, "score": round(score, 4), "metadata": meta})
+                return results
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug("vector_native_search_failed", error=str(e))
+            return None
 
     def _sql_find_exact(self, text: str) -> int | None:
         try:
@@ -393,8 +488,11 @@ class VectorStore:
     ) -> list[dict[str, Any]]:
         if not self._legacy_entries:
             return []
+        entries = self._legacy_entries
+        if len(entries) > 500:
+            entries = entries[-500:]
         scored: list[tuple[float, dict[str, Any]]] = []
-        for entry in self._legacy_entries:
+        for entry in entries:
             vec = entry.get("vector", [])
             if not vec:
                 continue
@@ -413,6 +511,30 @@ class VectorStore:
         return results
 
     # ── Mutation ────────────────────────────────────────────────
+
+    def upsert_meta(
+        self,
+        text: str,
+        tier: str = "long_term",
+        channel: str = "declarative",
+        importance: float = 0.5,
+        source: str = "unknown",
+    ) -> None:
+        if not self._use_sqlite:
+            return
+        try:
+            conn = self._get_conn()
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO vector_meta (text, tier, channel, importance, source) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (text, tier, channel, importance, source),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug("vector_meta_upsert_failed", error=str(e))
 
     def remove(self, text: str) -> bool:
         self._ensure_loaded()

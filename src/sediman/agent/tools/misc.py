@@ -324,11 +324,38 @@ async def _handle_todo(
 
 
 async def _handle_web_search(query: str, **kwargs: Any) -> ToolResult:
-    return ToolResult(
-        success=True,
-        output=f"Web search delegated to browser subagent for: {query}",
-        data={"query": query, "delegated": True},
-    )
+    if not query or not query.strip():
+        return ToolResult(success=False, output="query is required.")
+
+    try:
+        from sediman.web.extract import web_extract
+
+        encoded = __import__("urllib.parse", fromlist=["quote_plus"]).quote_plus(query.strip())
+        search_url = f"https://www.google.com/search?q={encoded}&hl=en"
+
+        result = await web_extract(url=search_url, query=query)
+        content = result.get("content", "")
+        stats = result.get("stats", {})
+
+        if stats.get("method") == "failed" or not content.strip():
+            return ToolResult(
+                success=False,
+                output=f"Web search failed for: {query}",
+                data={"query": query, "delegated": False},
+            )
+
+        return ToolResult(
+            success=True,
+            output=f"Search results for: {query}\n\n{content}",
+            data={"query": query, "url": search_url, "chars": len(content)},
+        )
+    except Exception as e:
+        logger.warning("web_search_failed", error=str(e))
+        return ToolResult(
+            success=False,
+            output=f"Web search error: {e}",
+            data={"query": query, "delegated": False},
+        )
 
 
 async def _handle_delegate_task(task: str, agent_type: str = "browser", **kwargs: Any) -> ToolResult:

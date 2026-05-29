@@ -69,6 +69,14 @@ class MemoryStore:
     def __init__(self) -> None:
         self._snapshot: str | None = None
         self._snapshot_loaded = False
+        self._entries_cache: dict[str, list[str]] = {}
+
+    def _invalidate_cache(self, target: str | None = None) -> None:
+        if target:
+            self._entries_cache.pop(target, None)
+        else:
+            self._entries_cache.clear()
+        self._snapshot_loaded = False
 
     # ── Frozen snapshot ──────────────────────────────────────────
 
@@ -77,11 +85,10 @@ class MemoryStore:
             return self._snapshot or ""
 
         self._maybe_migrate()
-        self._snapshot = self._format_snapshot()
+        snapshot_text, mem_usage, user_usage = self._format_snapshot_with_usage()
+        self._snapshot = snapshot_text
         self._snapshot_loaded = True
 
-        mem_usage = self.get_usage("memory")
-        user_usage = self.get_usage("user")
         logger.info(
             "memory_snapshot_loaded",
             memory_entries=len(mem_usage.entries),
@@ -95,6 +102,10 @@ class MemoryStore:
         return self._snapshot
 
     def _format_snapshot(self) -> str:
+        text, _, _ = self._format_snapshot_with_usage()
+        return text
+
+    def _format_snapshot_with_usage(self) -> tuple[str, MemoryUsage, MemoryUsage]:
         parts: list[str] = []
 
         mem_usage = self.get_usage("memory")
@@ -115,7 +126,7 @@ class MemoryStore:
 
         parts.append(MEMORY_GUIDANCE)
 
-        return "\n".join(parts)
+        return "\n".join(parts), mem_usage, user_usage
 
     def format_for_system_prompt(self) -> str:
         if not self._snapshot_loaded:
@@ -292,6 +303,7 @@ class MemoryStore:
             )
 
         self._atomic_write(self._get_file(target), new_text)
+        self._invalidate_cache(target)
 
         try:
             from sediman.memory.entry import ensure_meta_for_entry, classify_entry_type
@@ -362,6 +374,7 @@ class MemoryStore:
             )
 
         self._atomic_write(self._get_file(target), new_text)
+        self._invalidate_cache(target)
 
         try:
             from sediman.memory.entry import (
@@ -420,6 +433,7 @@ class MemoryStore:
             path = self._get_file(target)
             if path.exists():
                 path.unlink()
+        self._invalidate_cache(target)
 
         try:
             from sediman.memory.entry import (
@@ -484,14 +498,21 @@ class MemoryStore:
     # ── Internal ─────────────────────────────────────────────────
 
     def _parse_entries(self, target: str) -> list[str]:
+        cached = self._entries_cache.get(target)
+        if cached is not None:
+            return cached
         path = self._get_file(target)
         if not path.exists():
+            self._entries_cache[target] = []
             return []
         text = path.read_text().strip()
         if not text:
+            self._entries_cache[target] = []
             return []
         entries = [e.strip() for e in text.split(ENTRY_SEPARATOR)]
-        return [e for e in entries if e]
+        result = [e for e in entries if e]
+        self._entries_cache[target] = result
+        return result
 
     def _get_file(self, target: str) -> Path:
         if target == "user":

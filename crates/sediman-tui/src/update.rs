@@ -5,38 +5,412 @@ use tokio::sync::mpsc;
 
 use sediman_tui_core::event::AppEvent;
 
-use crate::app::App;
+use crate::app::{App, AppModal};
 use crate::commands::{
-    browser, delegate, hub, memory, misc, model, plan, record, schedule, sessions,
+    browser, delegate, hub, memory, misc, model, plan, provider, record, schedule, sessions,
     skills, soul, system, terminal, theming,
 };
+
+const DEFAULT_SOUL: &str = "You are Sediman, a self-improving browser automation agent.
+
+You are pragmatic, concise, and efficient. You complete browser tasks with minimal steps.
+
+Communication style:
+- Be brief but thorough
+- When reporting results, lead with the answer
+- If something fails, explain what went wrong and what you tried
+- Proactively suggest improvements when you notice patterns";
 
 pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::UnboundedSender<AppEvent>) {
     match event {
         AppEvent::Key(key) => {
             use crossterm::event::{KeyCode, KeyModifiers};
+
+            // Clipboard: Ctrl+V paste
+            if key.code == KeyCode::Char('v') && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if let Ok(text) = clipboard.get_text() {
+                        app.editor.insert_str(&text);
+                    }
+                }
+                return;
+            }
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
+                if let Some(result) = &app.last_result {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(&result.result);
+                    }
+                }
+                return;
+            }
+
+            // ── Unified modal key handling ──
+            if app.active_modal.is_some() {
+                // ModelPicker has its own input mode — all chars go to search/add field
+                if matches!(app.active_modal, Some(AppModal::ModelPicker)) {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.model_picker_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.model_picker_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            if !app.model_picker_input.is_empty() {
+                                // Add/switch to the typed model
+                                let input = app.model_picker_input.clone();
+                                let (new_provider, new_model) = if let Some(idx) = input.find('/') {
+                                    (input[..idx].to_string(), Some(input[idx + 1..].to_string()))
+                                } else if let Some(idx) = input.find(':') {
+                                    (input[..idx].to_string(), Some(input[idx + 1..].to_string()))
+                                } else {
+                                    (app.provider.clone(), Some(input))
+                                };
+                                app.provider = new_provider;
+                                app.model = new_model;
+                                let full = format!("{}/{}", app.provider, app.model.as_deref().unwrap_or("default"));
+                                if !app.model_picker_list.contains(&full) {
+                                    app.model_picker_list.push(full);
+                                    model::save_model_list(&app.model_picker_list);
+                                }
+                                app.model_picker_input.clear();
+                                app.active_modal = None;
+                            } else {
+                                // Select the highlighted item from list
+                                let filtered = model_filtered_indices(app);
+                                if let Some(&idx) = filtered.get(app.model_picker_index) {
+                                    let model_str = app.model_picker_list.get(idx).cloned();
+                                    if let Some(model_str) = model_str {
+                                        let (new_provider, new_model) = if let Some(i) = model_str.find('/') {
+                                            (model_str[..i].to_string(), Some(model_str[i + 1..].to_string()))
+                                        } else if let Some(i) = model_str.find(':') {
+                                            (model_str[..i].to_string(), Some(model_str[i + 1..].to_string()))
+                                        } else {
+                                            (app.provider.clone(), Some(model_str))
+                                        };
+                                        app.provider = new_provider;
+                                        app.model = new_model;
+                                    }
+                                }
+                                app.model_picker_input.clear();
+                                app.active_modal = None;
+                            }
+                            return;
+                        }
+                        KeyCode::Up => {
+                            if app.model_picker_index > 0 {
+                                app.model_picker_index -= 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Down => {
+                            let filtered = model_filtered_indices(app);
+                            if app.model_picker_index < filtered.len().saturating_sub(1) {
+                                app.model_picker_index += 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Backspace | KeyCode::Delete => {
+                            if app.model_picker_input.is_empty() {
+                                // Remove highlighted model from saved list
+                                let filtered = model_filtered_indices(app);
+                                if let Some(&idx) = filtered.get(app.model_picker_index) {
+                                    if app.model_picker_list.len() > idx {
+                                        let removed = app.model_picker_list.remove(idx);
+                                        model::save_model_list(&app.model_picker_list);
+                                        app.add_system_message(format!("Removed model: {}", removed));
+                                        if app.model_picker_index > 0 {
+                                            app.model_picker_index -= 1;
+                                        }
+                                    }
+                                }
+                            } else {
+                                app.model_picker_input.pop();
+                                app.model_picker_index = 0;
+                            }
+                            return;
+                        }
+                        KeyCode::Char('d') if app.model_picker_input.is_empty() => {
+                            // 'd' key also deletes when input is empty (same as memory editor)
+                            let filtered = model_filtered_indices(app);
+                            if let Some(&idx) = filtered.get(app.model_picker_index) {
+                                if app.model_picker_list.len() > idx {
+                                    let removed = app.model_picker_list.remove(idx);
+                                    model::save_model_list(&app.model_picker_list);
+                                    app.add_system_message(format!("Removed model: {}", removed));
+                                    if app.model_picker_index > 0 {
+                                        app.model_picker_index -= 1;
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::Char(c) => {
+                            app.model_picker_input.push(c);
+                            app.model_picker_index = 0; // reset selection on type
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
+                // ProviderPicker — input field for custom URL + quick-select list
+                if matches!(app.active_modal, Some(AppModal::ProviderPicker)) {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.provider_picker_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.provider_picker_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if app.provider_picker_index > 0 {
+                                app.provider_picker_index -= 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let max = 1usize; // openai(0), ollama(1) = max index 1
+                            if app.provider_picker_index < max {
+                                app.provider_picker_index += 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            if !app.provider_picker_input.is_empty() {
+                                // Use typed custom URL/name as provider
+                                let name = app.provider_picker_input.trim().to_string();
+                                app.provider = name.clone();
+                                app.add_system_message(format!("Provider: {}", name));
+                            } else {
+                                // Use selected quick-pick
+                                let providers = ["openai", "ollama"];
+                                if let Some(&name) = providers.get(app.provider_picker_index) {
+                                    app.provider = name.to_string();
+                                    app.add_system_message(format!("Provider: {}", name));
+                                }
+                            }
+                            app.provider_picker_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Backspace | KeyCode::Delete => {
+                            app.provider_picker_input.pop();
+                            return;
+                        }
+                        KeyCode::Char(c) => {
+                            app.provider_picker_input.push(c);
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
+                // MemoryEditor — text input to add, d to delete, arrows to navigate
+                if matches!(app.active_modal, Some(AppModal::MemoryEditor)) {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.memory_editor_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.memory_editor_input.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Up => {
+                            if app.memory_editor_index > 0 {
+                                app.memory_editor_index -= 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Down => {
+                            if app.memory_editor_index < app.memory_entries.len().saturating_sub(1) {
+                                app.memory_editor_index += 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            if !app.memory_editor_input.is_empty() {
+                                let text = app.memory_editor_input.clone();
+                                let _ = app.bridge.memory_add("memory", &text).await;
+                                app.memory_entries.push(("memory".to_string(), text));
+                                app.memory_editor_input.clear();
+                            }
+                            return;
+                        }
+                        KeyCode::Char('d') => {
+                            if app.memory_editor_input.is_empty() {
+                                if let Some((target, content)) = app.memory_entries.get(app.memory_editor_index).cloned() {
+                                    let _ = app.bridge.memory_remove(&target, &content).await;
+                                    app.memory_entries.remove(app.memory_editor_index);
+                                    if app.memory_editor_index > 0 {
+                                        app.memory_editor_index -= 1;
+                                    }
+                                }
+                            } else {
+                                app.memory_editor_input.push('d');
+                            }
+                            return;
+                        }
+                        KeyCode::Backspace => {
+                            app.memory_editor_input.pop();
+                            return;
+                        }
+                        KeyCode::Char(c) => {
+                            if c != 'd' || !app.memory_editor_input.is_empty() {
+                                app.memory_editor_input.push(c);
+                            }
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
+                // SoulEditor — text input to modify personality, Ctrl+R to reset
+                if matches!(app.active_modal, Some(AppModal::SoulEditor)) {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let _ = app.bridge.reset_soul().await;
+                            app.soul_editor_input = DEFAULT_SOUL.to_string();
+                            app.add_system_message("Personality reset to default.".into());
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            let text = app.soul_editor_input.trim().to_string();
+                            if !text.is_empty() {
+                                let _ = app.bridge.set_soul(&text).await;
+                                app.add_system_message("Personality updated.".into());
+                            }
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Backspace | KeyCode::Delete => {
+                            app.soul_editor_input.pop();
+                            return;
+                        }
+                        KeyCode::Char(c) => {
+                            app.soul_editor_input.push(c);
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
+                // Help / Info modal handling — vim-style navigation
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if let Some(AppModal::Info { scroll, .. }) = &mut app.active_modal {
+                            *scroll = scroll.saturating_add(1);
+                        }
+                        return;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if let Some(AppModal::Info { scroll, .. }) = &mut app.active_modal {
+                            *scroll = scroll.saturating_sub(1);
+                        }
+                        return;
+                    }
+                    KeyCode::PageDown => {
+                        if let Some(AppModal::Info { scroll, .. }) = &mut app.active_modal {
+                            *scroll = scroll.saturating_add(10);
+                        }
+                        return;
+                    }
+                    KeyCode::PageUp => {
+                        if let Some(AppModal::Info { scroll, .. }) = &mut app.active_modal {
+                            *scroll = scroll.saturating_sub(10);
+                        }
+                        return;
+                    }
+                    KeyCode::Enter => {
+                        app.active_modal = None;
+                        return;
+                    }
+                    _ => return,
+                }
+            }
+
             match key.code {
                 KeyCode::Esc => {
                     if app.agent_running {
                         app.interrupt.trigger();
                         app.agent_running = false;
                         app.append_step("-- Interrupted --".to_string());
-                    } else if app.show_help {
-                        app.show_help = false;
                     } else {
                         app.editor.delete_line_by_head();
                     }
                 }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // OpenCode-style: Ctrl+C clears input or cancels agent
+                    if app.agent_running {
+                        app.interrupt.trigger();
+                        app.agent_running = false;
+                        app.append_step("-- Cancelled --".to_string());
+                    } else {
+                        app.editor.delete_line_by_head();
+                    }
+                }
+                // Ctrl+/ toggles help (same as OpenCode's ctrl+?)
+                KeyCode::Char('/') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if matches!(app.active_modal, Some(AppModal::Help)) {
+                        app.active_modal = None;
+                    } else {
+                        app.active_modal = Some(AppModal::Help);
+                    }
+                }
+                // Keep Ctrl+P as alias for help toggle
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if matches!(app.active_modal, Some(AppModal::Help)) {
+                        app.active_modal = None;
+                    } else {
+                        app.active_modal = Some(AppModal::Help);
+                    }
+                }
                 KeyCode::Enter => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    // Ctrl+Enter or Shift+Enter → newline in editor
+                    // Plain Enter → submit
+                    let has_modifier = key.modifiers.contains(KeyModifiers::SHIFT)
+                        || key.modifiers.contains(KeyModifiers::CONTROL);
+                    if has_modifier {
                         app.editor.input(key);
                     } else {
                         let input = app.editor.submit();
                         if !input.is_empty() {
                             if input.starts_with('/') {
+                                // Slash commands always work, even while agent is running
                                 handle_slash(app, &input).await;
-                            } else if let Some(stripped) = input.strip_prefix('!') {
-                                handle_shell(app, stripped).await;
+                            } else if input.starts_with('!') {
+                                let cmd = &input[1..];
+                                handle_shell(app, cmd).await;
+                            } else if app.agent_running {
+                                // Queue non-slash text as a follow-up message
+                                app.add_system_message("Agent is busy. Queued.".into());
                             } else {
                                 handle_task(app, &input, event_tx).await;
                             }
@@ -80,9 +454,6 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                     app.permission.cycle();
                     app.add_system_message(format!("Mode: {}", app.permission.current_label()));
                 }
-                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    app.show_help = !app.show_help;
-                }
                 _ => {
                     app.editor.input(key);
                     // Update completer on every key press when typing a slash command
@@ -108,10 +479,17 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 app.advance_spinner();
             }
         }
-        AppEvent::Resize(_, _) => {}
+        AppEvent::Resize(w, h) => {
+            app.pending_resize = Some((w, h));
+        }
+        AppEvent::Paste(text) => {
+            app.editor.insert_str(&text);
+        }
+        AppEvent::Shutdown => {
+            app.running = false;
+        }
         AppEvent::AgentStep(phase, action) => {
-            let line = format!("{} {}", phase, action);
-            app.append_step(line);
+            app.append_step(format!("{} {}", phase, action));
         }
         AppEvent::AgentResult(success, result_text, elapsed_secs) => {
             let skill_created = None;
@@ -132,12 +510,24 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
 }
 
 fn scroll_up(app: &mut App, amount: u16) {
-    app.scroll_offset = app.scroll_offset.saturating_add(amount);
+    app.scroll_offset = app.scroll_offset.saturating_sub(amount);
     app.auto_scroll = false;
 }
 
+/// Compute filtered model indices based on the picker input text.
+fn model_filtered_indices(app: &App) -> Vec<usize> {
+    let query = app.model_picker_input.to_lowercase();
+    app.model_picker_list
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| query.is_empty() || m.to_lowercase().contains(&query))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn scroll_down(app: &mut App, amount: u16) {
-    app.scroll_offset = app.scroll_offset.saturating_sub(amount);
+    app.scroll_offset = app.scroll_offset.saturating_add(amount);
+    app.auto_scroll = false;
 }
 
 async fn handle_slash(app: &mut App, input: &str) {
@@ -154,11 +544,10 @@ async fn handle_slash(app: &mut App, input: &str) {
             system::handle_status(app, args).await;
             refresh_sidebar(app).await;
         }
-        "/skills" => {
+        "/skills" | "/skill" => {
             skills::handle_skills(app, args).await;
             refresh_sidebar(app).await;
         }
-        "/skill" => skills::handle_skill(app, args).await,
         "/run-skill" => skills::handle_run_skill(app, args).await,
         "/hub" => {
             let (sub_cmd, sub_args) = parse_command(args);
@@ -166,10 +555,22 @@ async fn handle_slash(app: &mut App, input: &str) {
                 "browse" => hub::handle_hub_browse(app, sub_args).await,
                 "search" => hub::handle_hub_search(app, sub_args).await,
                 "install" => hub::handle_hub_install(app, sub_args).await,
+                "install-github" => hub::handle_hub_install_github(app, sub_args).await,
                 "info" => hub::handle_hub_info(app, sub_args).await,
                 "publish" => hub::handle_hub_publish(app, sub_args).await,
                 _ => {
-                    app.add_system_message("Usage: /hub <browse|search|install|info|publish>".into());
+                    app.active_modal = Some(AppModal::Info {
+                        title: "Hub".into(),
+                        lines: vec![
+                            crate::app::ModalLine::blank(),
+                            crate::app::ModalLine::muted("  /hub browse          Browse skills"),
+                            crate::app::ModalLine::muted("  /hub search <query>  Search skills"),
+                            crate::app::ModalLine::muted("  /hub install <name>  Install a skill"),
+                            crate::app::ModalLine::muted("  /hub info <name>     Show skill details"),
+                            crate::app::ModalLine::muted("  /hub publish <name>  Publish a skill"),
+                        ],
+                        scroll: 0,
+                    });
                 }
             }
         }
@@ -178,8 +579,8 @@ async fn handle_slash(app: &mut App, input: &str) {
             refresh_sidebar(app).await;
         }
         "/remember" => memory::handle_remember(app, args).await,
-        "/model" => model::handle_model(app, args).await,
-        "/models" => model::handle_models(app, args).await,
+        "/model" | "/models" => model::handle_model(app, args).await,
+        "/provider" => provider::handle_provider(app, args).await,
         "/schedule" => {
             schedule::handle_schedule(app, args).await;
             refresh_sidebar(app).await;
@@ -211,27 +612,25 @@ async fn handle_slash(app: &mut App, input: &str) {
 }
 
 async fn refresh_sidebar(app: &mut App) {
-    // Populate skills cache
-    if let Ok(skills) = app.bridge.list_skills().await {
+    if let Ok(skills) = app.bridge.call_with_retry::<Vec<sediman_tui_bridge::SkillSummary>>("skills.list", serde_json::json!({}), 2).await {
         app.skills_cache = skills.iter().map(|s| {
             format!("{}: {}", s.name, s.description.chars().take(40).collect::<String>())
         }).collect();
     }
 
-    // Populate memory cache
-    if let Ok(mem) = app.bridge.get_memory().await {
+    if let Ok(mem) = app.bridge.call_with_retry::<sediman_tui_bridge::MemoryData>("memory.get", serde_json::json!({}), 2).await {
         let mut lines = Vec::new();
         if !mem.memory.is_empty() {
-            lines.push(format!("Mem: {} chars", mem.memory.len()));
+            lines.push(format!("Mem: {} chars", mem.memory.chars().count()));
         }
         if !mem.user.is_empty() {
-            lines.push(format!("User: {} chars", mem.user.len()));
+            lines.push(format!("User: {} chars", mem.user.chars().count()));
         }
         app.memory_cache = lines;
     }
 
     // Populate schedule cache
-    if let Ok(jobs) = app.bridge.list_schedules().await {
+    if let Ok(jobs) = app.bridge.call_with_retry::<Vec<sediman_tui_bridge::CronJob>>("schedule.list", serde_json::json!({}), 2).await {
         app.schedule_cache = jobs.iter().map(|j| {
             format!("{}: {}", j.cron_expr, j.task.chars().take(35).collect::<String>())
         }).collect();
@@ -254,7 +653,7 @@ async fn handle_shell(app: &mut App, cmd: &str) {
     crate::shell::run_shell_command(app, cmd).await;
 }
 
-async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSender<AppEvent>) {
+pub async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSender<AppEvent>) {
     app.show_banner = false;
     app.task_count += 1;
     app.agent_running = true;
@@ -269,15 +668,17 @@ async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSender
     let task_owned = task.to_string();
     let tx = event_tx.clone();
     let interrupt_flag = app.interrupt.flag().clone();
+    let start = std::time::Instant::now();
 
     tokio::spawn(async move {
         let result = run_agent_task_inner(&bridge_url, &task_owned, &tx, &interrupt_flag).await;
+        let elapsed = start.elapsed().as_secs();
         match result {
             Ok(Some(agent_result)) => {
                 let _ = tx.send(AppEvent::AgentResult(
                     agent_result.success,
                     agent_result.result.clone(),
-                    agent_result.elapsed_secs,
+                    elapsed,
                 ));
                 if agent_result.success {
                     let _ = tx.send(AppEvent::CommandOutput(format!(
@@ -373,7 +774,7 @@ mod tests {
     use crate::app::ChatMessage;
 
     fn test_app() -> App {
-        App::new("test".into(), Some("gpt-4".into()), true, ApiClient::new("/tmp/test.sock"))
+        App::new("test".into(), Some("gpt-4".into()), None, true, ApiClient::new("/tmp/test.sock"))
     }
 
     fn test_tx() -> mpsc::UnboundedSender<AppEvent> {
@@ -411,43 +812,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_scroll_up_increases_offset() {
+    async fn test_scroll_up_decreases_offset() {
         let mut app = test_app();
-        app.scroll_offset = 0;
+        app.scroll_offset = 10;
         scroll_up(&mut app, 5);
         assert_eq!(app.scroll_offset, 5);
         assert!(!app.auto_scroll);
     }
 
     #[tokio::test]
-    async fn test_scroll_up_saturating() {
+    async fn test_scroll_up_saturating_at_zero() {
+        let mut app = test_app();
+        app.scroll_offset = 3;
+        scroll_up(&mut app, 10);
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn test_scroll_down_increases_offset() {
+        let mut app = test_app();
+        app.scroll_offset = 0;
+        scroll_down(&mut app, 5);
+        assert_eq!(app.scroll_offset, 5);
+        assert!(!app.auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_scroll_down_saturating() {
         let mut app = test_app();
         app.scroll_offset = u16::MAX - 1;
-        scroll_up(&mut app, 10);
-        assert_eq!(app.scroll_offset, u16::MAX);
-    }
-
-    #[tokio::test]
-    async fn test_scroll_down_decreases_offset() {
-        let mut app = test_app();
-        app.scroll_offset = 10;
-        scroll_down(&mut app, 3);
-        assert_eq!(app.scroll_offset, 7);
-    }
-
-    #[tokio::test]
-    async fn test_scroll_down_saturating_at_zero() {
-        let mut app = test_app();
-        app.scroll_offset = 2;
         scroll_down(&mut app, 10);
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.scroll_offset, u16::MAX);
     }
 
     #[tokio::test]
     async fn test_handle_slash_help() {
         let mut app = test_app();
         handle_slash(&mut app, "/help").await;
-        assert!(app.show_help);
+        assert!(app.active_modal.is_some());
     }
 
     #[tokio::test]
@@ -610,8 +1012,8 @@ mod tests {
     async fn test_handle_slash_hub_no_subcommand() {
         let mut app = test_app();
         handle_slash(&mut app, "/hub").await;
-        let has_usage = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Usage")));
-        assert!(has_usage);
+        // /hub without subcommand now shows a modal instead of chat message
+        assert!(app.active_modal.is_some());
     }
 
     #[tokio::test]
@@ -631,17 +1033,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_slash_compress_keeps_first() {
+    async fn test_handle_slash_compress_keeps_recent() {
         let mut app = test_app();
-        app.add_system_message("keep".into());
-        app.add_user_message("remove".into(), 1);
-        app.add_system_message("remove too".into());
-        handle_slash(&mut app, "/compress").await;
-        assert!(app.messages.len() >= 1);
-        match &app.messages[0] {
-            ChatMessage::System { text } => assert_eq!(text, "keep"),
-            _ => panic!("Expected first message kept"),
+        for i in 0..25 {
+            app.add_system_message(format!("msg {}", i));
         }
+        handle_slash(&mut app, "/compress").await;
+        let has_compress_msg = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("compressed")));
+        assert!(has_compress_msg);
+        assert!(app.messages.len() <= 22);
     }
 
     #[tokio::test]
@@ -684,14 +1084,14 @@ mod tests {
         let mut app = test_app();
         app.start_agent_message("task");
         let tx = test_tx();
-        handle_message(&mut app, AppEvent::AgentStep("planning".into(), "reading code".into()), &tx).await;
-        match &app.messages[0] {
-            ChatMessage::Agent { steps, .. } => {
-                assert_eq!(steps.len(), 1);
-                assert!(steps[0].contains("planning"));
-                assert!(steps[0].contains("reading code"));
-            }
-            _ => panic!("Expected Agent message"),
+        let step_line = "planning reading code".to_string();
+        handle_message(&mut app, AppEvent::AgentStep("planning".into(), step_line), &tx).await;
+        let msg = &app.messages[0];
+        assert!(matches!(msg, ChatMessage::Agent { .. }), "Expected Agent message, got {:?}", msg);
+        if let ChatMessage::Agent { steps, .. } = msg {
+            assert_eq!(steps.len(), 1);
+            assert!(steps[0].contains("planning"));
+            assert!(steps[0].contains("reading code"));
         }
     }
 
@@ -703,13 +1103,12 @@ mod tests {
         let tx = test_tx();
         handle_message(&mut app, AppEvent::AgentResult(true, "done".into(), 10), &tx).await;
         assert!(!app.agent_running);
-        match &app.messages[0] {
-            ChatMessage::Agent { result, success, elapsed_secs, .. } => {
-                assert_eq!(result.as_deref(), Some("done"));
-                assert!(*success);
-                assert_eq!(*elapsed_secs, 10);
-            }
-            _ => panic!("Expected Agent message"),
+        let msg = &app.messages[0];
+        assert!(matches!(msg, ChatMessage::Agent { .. }), "Expected Agent message, got {:?}", msg);
+        if let ChatMessage::Agent { result, success, elapsed_secs, .. } = msg {
+            assert_eq!(result.as_deref(), Some("done"));
+            assert!(*success);
+            assert_eq!(*elapsed_secs, 10);
         }
     }
 

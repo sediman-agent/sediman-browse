@@ -160,28 +160,74 @@ class TestHealSkillWithScreenshot:
 
 
 class TestVerifySkill:
-    def test_verify_passed(self):
-        result = verify_skill(
+    @pytest.mark.asyncio
+    async def test_verify_passed(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(
+            return_value=LLMResponse(text='{"passed": true, "fail_reason": ""}')
+        )
+        result = await verify_skill(
             "test-skill",
             {"name": "test-skill", "description": "test"},
             "verify it works",
+            llm,
         )
         assert result["passed"] is True
 
-    def test_verify_with_screenshot_path(self):
-        result = verify_skill(
-            "test-skill",
-            {"name": "test-skill"},
-            "verify it works",
-            screenshot_path="/tmp/screen.png",
+    @pytest.mark.asyncio
+    async def test_verify_failed(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(
+            return_value=LLMResponse(text='{"passed": false, "fail_reason": "element not found"}')
         )
+        result = await verify_skill(
+            "test-skill",
+            {"name": "test-skill", "description": "test"},
+            "verify it works",
+            llm,
+        )
+        assert result["passed"] is False
+        assert "not found" in result["fail_reason"]
+
+    @pytest.mark.asyncio
+    async def test_verify_no_response(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(return_value=LLMResponse(text=None))
+        result = await verify_skill(
+            "test-skill",
+            {"name": "test-skill", "description": "test"},
+            "verify it works",
+            llm,
+        )
+        assert result["passed"] is False
+
+    @pytest.mark.asyncio
+    async def test_verify_with_screenshot_path(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(
+            return_value=LLMResponse(text='{"passed": true, "fail_reason": ""}')
+        )
+        with patch("sediman.skills.healer._safe_read_screenshot", return_value="fakebase64=="):
+            result = await verify_skill(
+                "test-skill",
+                {"name": "test-skill"},
+                "verify it works",
+                llm,
+                screenshot_path="/tmp/screen.png",
+            )
         assert result["passed"] is True
 
-    def test_verify_with_dom_snapshot(self):
-        result = verify_skill(
+    @pytest.mark.asyncio
+    async def test_verify_with_dom_snapshot(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(
+            return_value=LLMResponse(text='{"passed": true, "fail_reason": ""}')
+        )
+        result = await verify_skill(
             "test-skill",
             {"name": "test-skill"},
             "verify it works",
+            llm,
             dom_snapshot="<html><body>ok</body></html>",
         )
         assert result["passed"] is True

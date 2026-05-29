@@ -6,8 +6,6 @@ use tokio::process::Command;
 use crate::app::App;
 
 pub async fn run_shell_command(app: &mut App, cmd: &str) {
-    app.add_system_message(format!("$ {}", cmd));
-
     let child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
@@ -18,26 +16,58 @@ pub async fn run_shell_command(app: &mut App, cmd: &str) {
     match child {
         Ok(mut child) => {
             let stdout = child.stdout.take();
-            if let Some(stdout) = stdout {
-                let mut reader = tokio::io::BufReader::new(stdout).lines();
-                let mut count = 0;
-                while let Ok(Some(line)) = reader.next_line().await {
-                    if count < 100 {
-                        app.add_system_message(format!("  {}", line));
-                    }
-                    count += 1;
-                }
-                if count > 100 {
-                    app.add_system_message(format!("  ... ({} more lines)", count - 100));
-                }
-            }
-
             let stderr = child.stderr.take();
-            if let Some(stderr) = stderr {
-                let mut reader = tokio::io::BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
+
+            let stdout_lines = tokio::spawn(async move {
+                let mut lines = Vec::new();
+                if let Some(stdout) = stdout {
+                    let mut reader = tokio::io::BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        lines.push(line);
+                    }
+                }
+                lines
+            });
+
+            let stderr_lines = tokio::spawn(async move {
+                let mut lines = Vec::new();
+                if let Some(stderr) = stderr {
+                    let mut reader = tokio::io::BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        lines.push(line);
+                    }
+                }
+                lines
+            });
+
+            let (out, err) = tokio::join!(stdout_lines, stderr_lines);
+            let out = match out {
+                Ok(lines) => lines,
+                Err(e) => {
+                    app.add_system_message(format!("stdout read error: {}", e));
+                    Vec::new()
+                }
+            };
+            let err = match err {
+                Ok(lines) => lines,
+                Err(e) => {
+                    app.add_system_message(format!("stderr read error: {}", e));
+                    Vec::new()
+                }
+            };
+
+            let mut count = 0;
+            for line in &out {
+                if count < 100 {
                     app.add_system_message(format!("  {}", line));
                 }
+                count += 1;
+            }
+            if count > 100 {
+                app.add_system_message(format!("  ... ({} more lines)", count - 100));
+            }
+            for line in &err {
+                app.add_system_message(format!("  {}", line));
             }
 
             let status = child.wait().await;
@@ -88,6 +118,6 @@ mod tests {
 
     fn create_test_app() -> crate::app::App {
         let bridge = sediman_tui_bridge::ApiClient::new("/tmp/sediman.sock");
-        crate::app::App::new("openai".into(), None, false, bridge)
+        crate::app::App::new("openai".into(), None, None, false, bridge)
     }
 }

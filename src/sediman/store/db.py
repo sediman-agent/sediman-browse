@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import aiosqlite
 import structlog
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 logger = structlog.get_logger()
 
@@ -79,27 +81,81 @@ CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
 END;
 """
 
+_PERF_PRAGMAS = [
+    "PRAGMA journal_mode=WAL",
+    "PRAGMA synchronous=NORMAL",
+    "PRAGMA cache_size=-32000",
+    "PRAGMA busy_timeout=5000",
+    "PRAGMA foreign_keys=ON",
+]
 
-def get_db_path() -> Path:
-    return DEFAULT_DATA_DIR / DB_NAME
+_POOL_SIZE = 3
+_pool: list[aiosqlite.Connection] = []
+_pool_lock = asyncio.Lock()
+_pool_initialized = False
 
 
-async def init_db() -> None:
-    DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+async def _init_pool() -> None:
+    global _pool_initialized
+    if _pool_initialized:
+        return
+    _pool_initialized = True
+
+
+async def _create_conn() -> aiosqlite.Connection:
     db_path = get_db_path()
-    async with aiosqlite.connect(db_path) as db:
-        await db.executescript(_SCHEMA)
-        await db.commit()
-    logger.info("database_initialized", path=str(db_path))
+    conn = await aiosqlite.connect(db_path, timeout=10)
+    conn.row_factory = aiosqlite.Row
+    for pragma in _PERF_PRAGMAS:
+        try:
+            await conn.execute(pragma)
+        except Exception:
+            pass
+    return conn
+
+
+async def acquire() -> aiosqlite.Connection:
+    DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    await _init_pool()
+    async with _pool_lock:
+        while _pool:
+            conn = _pool.pop()
+            try:
+                await conn.execute("SELECT 1")
+            except Exception:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+                continue
+            return conn
+
+        return await _create_conn()
+
+
+async def release(conn: aiosqlite.Connection) -> None:
+    async with _pool_lock:
+        if len(_pool) < _POOL_SIZE:
+            _pool.append(conn)
+        else:
+            try:
+                await conn.close()
+            except Exception:
+                pass
 
 
 @asynccontextmanager
-async def get_connection() -> aiosqlite.Connection:
-    """Yield a database connection that is automatically closed."""
-    db_path = get_db_path()
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
+async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
+    conn = await acquire()
     try:
         yield conn
     finally:
-        await conn.close()
+        await release(conn)
+
+
+async def init_db() -> None:
+    await _init_pool()
+
+
+def get_db_path() -> Path:
+    return DEFAULT_DATA_DIR / DB_NAME

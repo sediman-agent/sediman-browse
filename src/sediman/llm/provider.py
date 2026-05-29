@@ -39,6 +39,12 @@ class ToolDefinition:
 
 
 class LLMProvider(ABC):
+    def __init__(self) -> None:
+        self._token_callback: Any = None
+
+    def set_token_callback(self, callback: Any) -> None:
+        self._token_callback = callback
+
     @abstractmethod
     async def chat(
         self,
@@ -85,6 +91,7 @@ class OpenAICompatibleProvider(LLMProvider):
         api_key: str | None = None,
         base_url: str | None = None,
     ):
+        super().__init__()
         from openai import AsyncOpenAI
 
         self.model = model
@@ -271,12 +278,21 @@ class OpenAICompatibleProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": all_messages,
-            "tools": openai_tools,
         }
 
-        response = await self.client.chat.completions.create(**kwargs)
+        if openai_tools:
+            kwargs["tools"] = openai_tools
+
+        response = await self._chat_with_retry(kwargs)
         choice = response.choices[0]
         message = choice.message
+
+        if self._token_callback and response.usage:
+            total = (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+            try:
+                self._token_callback(total)
+            except Exception:
+                pass
 
         tool_calls = []
         if message.tool_calls:
@@ -294,6 +310,40 @@ class OpenAICompatibleProvider(LLMProvider):
             tool_calls=tool_calls,
             done=not tool_calls,
         )
+
+    async def _chat_with_retry(self, kwargs: dict[str, Any], max_retries: int = 3) -> Any:
+        import asyncio as _asyncio
+
+        retryable_errors = (
+            ConnectionError,
+            TimeoutError,
+        )
+        for attempt in range(max_retries + 1):
+            try:
+                return await self.client.chat.completions.create(**kwargs)
+            except retryable_errors as e:
+                if attempt >= max_retries:
+                    raise
+                wait = min(2 ** attempt + 0.5, 10)
+                logger.warning("llm_retry", attempt=attempt + 1, error=str(e)[:100], wait=wait)
+                await _asyncio.sleep(wait)
+            except Exception as e:
+                err_type = type(e).__name__
+                if "RateLimit" in err_type or "429" in str(e):
+                    if attempt >= max_retries:
+                        raise
+                    wait = min(2 ** (attempt + 1), 30)
+                    logger.warning("llm_rate_limited", attempt=attempt + 1, wait=wait)
+                    await _asyncio.sleep(wait)
+                elif any(code in str(e) for code in ("500", "502", "503", "504")):
+                    if attempt >= max_retries:
+                        raise
+                    wait = min(2 ** attempt + 0.5, 10)
+                    logger.warning("llm_server_error", attempt=attempt + 1, wait=wait)
+                    await _asyncio.sleep(wait)
+                else:
+                    raise
+        return await self.client.chat.completions.create(**kwargs)
 
     async def chat_with_failover(
         self,
@@ -322,6 +372,11 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "model": "qwen3",
         "base_url": "http://localhost:11434/v1",
         "api_key_env": None,
+    },
+    "minimax": {
+        "model": "MiniMax-Text-01",
+        "base_url": "https://api.minimaxi.com/v1",
+        "api_key_env": "MINIMAX_API_KEY",
     },
 }
 

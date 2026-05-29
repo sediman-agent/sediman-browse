@@ -246,4 +246,34 @@ mod tests {
         let b = Style::new().fg(Color::BLUE);
         assert_ne!(a, b);
     }
+
+    #[test]
+    fn test_remove_modifier_never_set() {
+        let s = Style::new().fg(Color::RED);
+        let s2 = s.remove_modifier(TextAttributes::bold());
+        assert_eq!(s2.fg, Some(Color::RED));
+        assert!(!s2.attrs.bold);
+    }
+
+    #[test]
+    fn test_remove_all_modifiers() {
+        let s = Style::new()
+            .add_modifier(TextAttributes::bold())
+            .add_modifier(TextAttributes::italic())
+            .add_modifier(TextAttributes::underline());
+        let s2 = s.remove_modifier(TextAttributes::bold())
+                  .remove_modifier(TextAttributes::italic())
+                  .remove_modifier(TextAttributes::underline());
+        assert!(!s2.attrs.bold);
+        assert!(!s2.attrs.italic);
+        assert!(!s2.attrs.underline);
+    }
+
+    #[test]
+    fn test_merge_same_attribute() {
+        let a = TextAttributes::bold();
+        let b = TextAttributes::bold();
+        let merged = a.merge(b);
+        assert!(merged.bold);
+    }
 }

@@ -1,38 +1,50 @@
 use sediman_tui_core::command::{Command, CommandCategory};
 
-use crate::app::App;
+use crate::app::{App, AppModal, ModalLine};
 
 pub async fn handle_usage(app: &mut App, _args: &str) {
-    let conv_chars: usize = app.step_log.iter().map(|s| s.len()).sum();
+    let conv_chars: usize = app.step_log.iter().map(|s| s.chars().count()).sum();
     let est_tokens = conv_chars / 4;
-    app.add_system_message("Session Usage".into());
-    app.add_system_message(format!("  Tasks run:  {}", app.task_count));
-    app.add_system_message(format!("  Est. tokens: ~{}", est_tokens));
-    app.add_system_message(format!("  Messages: {}", app.messages.len()));
-    app.add_system_message(format!(
-        "  Model: {}/{}",
-        app.provider,
-        app.model.as_deref().unwrap_or("default")
-    ));
-    app.add_system_message(format!("  Agent running: {}", app.agent_running));
+    app.active_modal = Some(AppModal::Info {
+        title: "Usage".into(),
+        lines: vec![
+            ModalLine::heading("  Session Usage"),
+            ModalLine::blank(),
+            ModalLine::normal(format!("  Tasks run     {}", app.task_count)),
+            ModalLine::normal(format!("  Est. tokens   ~{}", est_tokens)),
+            ModalLine::normal(format!("  Messages      {}", app.messages.len())),
+            ModalLine::normal(format!("  Model         {}/{}", app.provider, app.model.as_deref().unwrap_or("default"))),
+            ModalLine::normal(format!("  Agent         {}", if app.agent_running { "running" } else { "idle" })),
+        ],
+        scroll: 0,
+    });
 }
 
 pub async fn handle_doctor(app: &mut App, _args: &str) {
-    app.add_system_message("Sediman Diagnostics".into());
+    let mut lines = vec![
+        ModalLine::heading("  Sediman Diagnostics"),
+        ModalLine::blank(),
+    ];
     match app.bridge.status().await {
         Ok(status) => {
-            app.add_system_message(format!("  API server: ok (uptime: {}s)", status.uptime_secs));
-            app.add_system_message(format!(
-                "  Browser: {}",
+            lines.push(ModalLine::normal(format!("  API server    ok (uptime: {}s)", status.uptime_secs)));
+            lines.push(ModalLine::normal(format!(
+                "  Browser       {}",
                 if status.browser_open { "open" } else { "closed" }
-            ));
+            )));
         }
         Err(_) => {
-            app.add_error_message("API server not reachable".into());
+            lines.push(ModalLine::error("  API server    NOT REACHABLE"));
         }
     }
-    app.add_system_message("  Config dir: ~/.sediman/".into());
-    app.add_system_message(format!("  Mode: {}", app.permission.current_label()));
+    lines.push(ModalLine::normal("  Config dir    ~/.sediman/"));
+    lines.push(ModalLine::normal(format!("  Mode          {}", app.permission.current_label())));
+
+    app.active_modal = Some(AppModal::Info {
+        title: "Diagnostics".into(),
+        lines,
+        scroll: 0,
+    });
 }
 
 pub async fn handle_export(app: &mut App, _args: &str) {
@@ -65,7 +77,7 @@ pub async fn handle_export(app: &mut App, _args: &str) {
     let _ = std::fs::create_dir_all(&dir);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
     let path = format!("{}/export_{}.md", dir, timestamp);
 
@@ -98,7 +110,7 @@ pub async fn handle_color(app: &mut App, args: &str) {
         use std::time::SystemTime;
         let idx = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos() as usize % colors.len();
         app.session_color = Some(colors[idx].to_string());
         app.add_system_message(format!("Color set to: {}", colors[idx]));
@@ -134,7 +146,6 @@ pub static CMD_USAGE: Command = Command {
     aliases: &[],
     description: "Show session usage stats",
     category: CommandCategory::Utilities,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_DOCTOR: Command = Command {
@@ -142,7 +153,6 @@ pub static CMD_DOCTOR: Command = Command {
     aliases: &[],
     description: "Diagnose installation and settings",
     category: CommandCategory::Utilities,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_EXPORT: Command = Command {
@@ -150,7 +160,6 @@ pub static CMD_EXPORT: Command = Command {
     aliases: &[],
     description: "Export conversation to Markdown file",
     category: CommandCategory::Utilities,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_BTW: Command = Command {
@@ -158,7 +167,6 @@ pub static CMD_BTW: Command = Command {
     aliases: &[],
     description: "Ephemeral side question: /btw <question>",
     category: CommandCategory::Utilities,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_COLOR: Command = Command {
@@ -166,7 +174,6 @@ pub static CMD_COLOR: Command = Command {
     aliases: &[],
     description: "Set prompt bar color",
     category: CommandCategory::Terminal,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_RENAME: Command = Command {
@@ -174,5 +181,4 @@ pub static CMD_RENAME: Command = Command {
     aliases: &[],
     description: "Name this session: /rename <name>",
     category: CommandCategory::Terminal,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

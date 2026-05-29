@@ -1,60 +1,68 @@
 use sediman_tui_core::command::{Command, CommandCategory};
 
-use crate::app::App;
+use crate::app::{App, AppModal};
 
+/// `/model` without args — opens the model picker modal.
+/// `/model <name>` — switches directly and saves to the list.
+/// `/model remove <name>` — removes a saved model from the list.
 pub async fn handle_model(app: &mut App, args: &str) {
     if args.is_empty() {
-        app.add_system_message(format!(
-            "Current model: {}/{}",
-            app.provider,
-            app.model.as_deref().unwrap_or("default")
-        ));
-        app.add_system_message("Usage: /model <provider:model>".into());
-        app.add_system_message("    or: /model <model> (keeps current provider)".into());
+        // Open the model picker modal with saved models
+        if app.model_picker_list.is_empty() {
+            let config = crate::config::TuiConfig::load();
+            app.model_picker_list = config.saved_models;
+        }
+        app.model_picker_index = 0;
+        app.model_picker_input.clear();
+        app.active_modal = Some(AppModal::ModelPicker);
         return;
     }
 
+    // `/model remove <name>` — remove a saved model
+    if let Some(name) = args.strip_prefix("remove ") {
+        let name = name.trim();
+        app.model_picker_list.retain(|m| m != name);
+        save_model_list(&app.model_picker_list);
+        app.add_system_message(format!("Removed model: {}", name));
+        return;
+    }
+
+    // `/model <provider:model>` or `/model <model>` — switch and save
     let (new_provider, new_model) = if let Some(idx) = args.find(':') {
         (args[..idx].to_string(), Some(args[idx + 1..].to_string()))
     } else {
         (app.provider.clone(), Some(args.to_string()))
     };
 
+    let full_id = format!("{}/{}", new_provider, new_model.as_deref().unwrap_or("default"));
+
     app.provider = new_provider;
     app.model = new_model;
+
+    // Auto-save to user's model list if not already there
+    if !app.model_picker_list.contains(&full_id) {
+        app.model_picker_list.push(full_id);
+        save_model_list(&app.model_picker_list);
+    }
+
     app.add_system_message(format!(
         "Switched to {}/{}",
         app.provider,
         app.model.as_deref().unwrap_or("default")
     ));
-    app.add_system_message("Agent will use new model on next task".into());
 }
 
-pub async fn handle_models(app: &mut App, _args: &str) {
-    app.add_system_message("Available providers:".into());
-    app.add_system_message("  openai - gpt-4o (default), gpt-4o-mini, etc.".into());
-    app.add_system_message("  ollama - qwen3, llama3, etc. (http://localhost:11434/v1)".into());
-    app.add_system_message("  custom - any OpenAI-compatible API".into());
-    app.add_system_message("".into());
-    app.add_system_message(format!(
-        "Current: {}",
-        app.model.as_deref().unwrap_or("not set")
-    ));
-    app.add_system_message("Switch with: /model <provider:model>".into());
+pub fn save_model_list(models: &[String]) {
+    let mut config = crate::config::TuiConfig::load();
+    config.saved_models = models.to_vec();
+    if let Err(e) = config.save() {
+        eprintln!("Warning: {}", e);
+    }
 }
 
 pub static CMD_MODEL: Command = Command {
     name: "/model",
-    aliases: &[],
-    description: "Show or switch model: /model or /model <provider:model>",
+    aliases: &["/models"],
+    description: "Select, switch, or manage models",
     category: CommandCategory::Agent,
-    handler: |_, _| Box::new(std::future::ready(())),
-};
-
-pub static CMD_MODELS: Command = Command {
-    name: "/models",
-    aliases: &[],
-    description: "List available provider presets",
-    category: CommandCategory::Agent,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

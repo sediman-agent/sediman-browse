@@ -1,0 +1,123 @@
+# Evil Skill Generalization Benchmark
+# 20 templates × 3 variants = 60 tasks
+# Each page has 7 layers with extreme anti-LLM obfuscation
+
+templates:
+  - id: finance_01
+    template: yahoo_finance
+    variants: ["AAPL", "NVDA", "AMD"]
+    expected_keys: ["revenue", "net_income", "eps"]
+    golden_path:
+      - "Click hidden nav button (opacity 0.005, onclick='showLayer(1)')"
+      - "Click 'I Agree — Continue' in Terms of Service"
+      - "Check consent checkbox for {variant} data processing"
+      - "Type '{variant}' in confirm input field and click 'Cancel & Continue'"
+      - "Find ghost button (empty text, no onclick attribute, id starts with 'ghost-') and click it"
+      - "Click hidden submit button (id='security-submit-btn') in security layer"
+      - "Expand 'Summary for {variant}' accordion header (item 12 of 15)"
+      - "Click 'View {variant} Data →' button"
+      - "Wait 3 seconds for dynamic data table to build (JS generated, not static)"
+      - "Extract required fields from data table"
+
+  - id: finance_02
+    template: google_finance
+    variants: ["GOOGL", "META", "AMZN"]
+    expected_keys: ["price", "market_cap", "pe_ratio"]
+
+  - id: finance_03
+    template: coinmarketcap
+    variants: ["BTC", "ETH", "SOL"]
+    expected_keys: ["price", "market_cap", "volume_24h"]
+
+  - id: finance_04
+    template: sec_edgar
+    variants: ["AAPL_10K", "MSFT_10K", "GOOGL_10K"]
+    expected_keys: ["filing_date", "revenue", "employees"]
+
+  - id: ecommerce_01
+    template: amazon_product
+    variants: ["laptop", "headphones", "monitor"]
+    expected_keys: ["price", "rating", "review_count"]
+
+  - id: ecommerce_02
+    template: newegg_specs
+    variants: ["RTX_4090", "Ryzen_9_7950X", "DDR5_32GB"]
+    expected_keys: ["brand", "price", "key_specs"]
+
+  - id: ecommerce_03
+    template: zillow_listing
+    variants: ["Seattle", "Austin", "Denver"]
+    expected_keys: ["price", "beds", "sqft"]
+
+  - id: knowledge_01
+    template: wikipedia_infobox
+    variants: ["Albert_Einstein", "Marie_Curie", "Isaac_Newton"]
+    expected_keys: ["birth_date", "field", "known_for"]
+
+  - id: knowledge_02
+    template: arxiv_paper
+    variants: ["attention_is_all_you_need", "bert", "gpt3"]
+    expected_keys: ["title", "authors", "citations"]
+
+  - id: knowledge_03
+    template: google_scholar
+    variants: ["transformer_architecture", "resnet", "bert"]
+    expected_keys: ["title", "authors", "citation_count"]
+
+  - id: knowledge_04
+    template: bbc_news
+    variants: ["climate_change", "artificial_intelligence", "space_exploration"]
+    expected_keys: ["headline", "date", "category"]
+
+  - id: social_01
+    template: github_repo
+    variants: ["torvalds/linux", "facebook/react", "microsoft/vscode"]
+    expected_keys: ["stars", "forks", "last_commit"]
+
+  - id: social_02
+    template: imdb_rating
+    variants: ["Inception", "The_Matrix", "Interstellar"]
+    expected_keys: ["rating", "director", "release_year"]
+
+  - id: social_03
+    template: linkedin_job
+    variants: ["Software_Engineer", "Data_Scientist", "Product_Manager"]
+    expected_keys: ["company", "location", "posting_date"]
+
+  - id: utility_01
+    template: weather_forecast
+    variants: ["New_York", "London", "Tokyo"]
+    expected_keys: ["temperature", "humidity", "condition"]
+
+  - id: utility_02
+    template: google_maps
+    variants: ["NYC_to_Boston", "LA_to_San_Diego", "Chicago_to_Detroit"]
+    expected_keys: ["distance", "duration", "traffic"]
+
+  - id: utility_03
+    template: allrecipes
+    variants: ["chocolate_cake", "lasagna", "pancakes"]
+    expected_keys: ["title", "prep_time", "rating"]
+
+  - id: utility_04
+    template: ticketmaster
+    variants: ["Taylor_Swift", "Beyonce", "Coldplay"]
+    expected_keys: ["venue", "date", "price_range"]
+
+  - id: utility_05
+    template: espn_score
+    variants: ["Lakers", "Warriors", "Celtics"]
+    expected_keys: ["score", "opponent", "status"]
+
+  - id: utility_06
+    template: yelp_restaurant
+    variants: ["San_Francisco", "Austin", "Seattle"]
+    expected_keys: ["name", "rating", "price_range"]
+
+config:
+  total_templates: 20
+  variants_per_template: 3
+  total_tasks: 60
+  mock_server_url: "http://localhost:9999"
+  max_steps: 80
+  timeout_seconds: 180

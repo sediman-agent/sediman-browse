@@ -2,30 +2,6 @@ use crate::client::{ApiClient, BridgeResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MemoryUsageInfo {
-    pub chars: usize,
-    pub limit: usize,
-    pub pct: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MemoryEntry {
-    pub text: String,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub entry_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub access_count: Option<usize>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MemoryGetResult {
-    pub entries: std::collections::HashMap<String, Vec<String>>,
-    pub usage: std::collections::HashMap<String, MemoryUsageInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct ChangelogEntry {
     pub action: String,
     pub target: String,
@@ -37,15 +13,11 @@ pub struct ChangelogEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChangelogResult {
-    pub changes: Vec<ChangelogEntry>,
+struct ChangelogResult {
+    changes: Vec<ChangelogEntry>,
 }
 
 impl ApiClient {
-    pub async fn memory_get(&self) -> BridgeResult<MemoryGetResult> {
-        self.call("memory.get", serde_json::json!({})).await
-    }
-
     pub async fn memory_add(&self, target: &str, content: &str) -> BridgeResult<()> {
         self.call::<serde_json::Value>(
             "memory.add",

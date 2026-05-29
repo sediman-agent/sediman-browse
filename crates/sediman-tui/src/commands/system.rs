@@ -1,20 +1,18 @@
-use crate::app::App;
+use crate::app::{App, AppModal, ModalLine};
 
 pub async fn handle_help(app: &mut App, _args: &str) {
-    app.show_help = true;
+    app.active_modal = Some(AppModal::Help);
 }
 
 pub async fn handle_clear(app: &mut App, _args: &str) {
     app.messages.clear();
     app.step_log.clear();
-    app.output_text.clear();
     app.add_system_message("Conversation cleared.".into());
 }
 
 pub async fn handle_reset(app: &mut App, _args: &str) {
     app.messages.clear();
     app.step_log.clear();
-    app.output_text.clear();
     app.task_count = 0;
     app.last_result = None;
     app.editor = sediman_tui_core::input::TextEditor::new();
@@ -25,16 +23,13 @@ pub async fn handle_reset(app: &mut App, _args: &str) {
 
 pub async fn handle_compress(app: &mut App, _args: &str) {
     app.add_system_message("Compressing conversation...".into());
-    app.step_log.truncate(50);
-    let mut compressed = Vec::new();
-    let mut keep = true;
-    for msg in app.messages.drain(..) {
-        if keep {
-            compressed.push(msg);
-        }
-        keep = false;
+    app.step_log.drain(..app.step_log.len().saturating_sub(50));
+    let keep_count = 20;
+    if app.messages.len() > keep_count {
+        let drain_count = app.messages.len() - keep_count;
+        app.messages.drain(..drain_count);
+        app.messages.insert(0, crate::app::ChatMessage::System { text: format!("(compressed {} older messages)", drain_count) });
     }
-    app.messages = compressed;
     app.add_system_message("Conversation compressed.".into());
 }
 
@@ -43,6 +38,8 @@ pub async fn handle_exit(app: &mut App, _args: &str) {
 }
 
 pub async fn handle_status(app: &mut App, _args: &str) {
+    let mut lines = Vec::new();
+
     match app.bridge.status().await {
         Ok(status) => {
             let uptime = if status.uptime_secs >= 60 {
@@ -50,16 +47,30 @@ pub async fn handle_status(app: &mut App, _args: &str) {
             } else {
                 format!("{}s", status.uptime_secs)
             };
-            app.add_system_message("Status".into());
-            app.add_system_message(format!("  Server uptime: {}", uptime));
-            app.add_system_message(format!("  Browser open: {}", status.browser_open));
-            app.add_system_message(format!("  Tasks completed: {}", status.tasks_completed));
-            app.add_system_message(format!("  Model: {}/{}", app.provider, app.model.as_deref().unwrap_or("-")));
-            app.add_system_message(format!("  Tasks this session: {}", app.task_count));
-            app.add_system_message(format!("  Mode: {}", app.permission.current_label()));
+            lines.push(ModalLine::heading("Server"));
+            lines.push(ModalLine::normal(format!("  Uptime           {}", uptime)));
+            lines.push(ModalLine::normal(format!("  Browser          {}", if status.browser_open { "open" } else { "closed" })));
+            lines.push(ModalLine::normal(format!("  Tasks completed   {}", status.tasks_completed)));
+            lines.push(ModalLine::blank());
         }
-        Err(e) => app.add_error_message(format!("Status check failed: {}", e)),
+        Err(e) => {
+            lines.push(ModalLine::error(format!("  Server unreachable: {}", e)));
+            lines.push(ModalLine::blank());
+        }
     }
+
+    lines.push(ModalLine::heading("Session"));
+    lines.push(ModalLine::normal(format!("  Model      {}/{}", app.provider, app.model.as_deref().unwrap_or("-"))));
+    lines.push(ModalLine::normal(format!("  Mode       {}", app.permission.current_label())));
+    lines.push(ModalLine::normal(format!("  Tasks      {}", app.task_count)));
+    lines.push(ModalLine::normal(format!("  Browser    {}", if app.headless { "headless" } else { "headed + vision" })));
+    lines.push(ModalLine::normal(format!("  Theme      {}", app.theme_name)));
+
+    app.active_modal = Some(AppModal::Info {
+        title: "Status".into(),
+        lines,
+        scroll: 0,
+    });
 }
 
 use sediman_tui_core::command::{Command, CommandCategory};
@@ -69,7 +80,6 @@ pub static CMD_HELP: Command = Command {
     aliases: &["/h", "/?"],
     description: "Show categorized command list",
     category: CommandCategory::General,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_CLEAR: Command = Command {
@@ -77,7 +87,6 @@ pub static CMD_CLEAR: Command = Command {
     aliases: &[],
     description: "Clear conversation",
     category: CommandCategory::General,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_RESET: Command = Command {
@@ -85,7 +94,6 @@ pub static CMD_RESET: Command = Command {
     aliases: &[],
     description: "Full reset: agent, LLM, task count",
     category: CommandCategory::General,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_COMPRESS: Command = Command {
@@ -93,7 +101,6 @@ pub static CMD_COMPRESS: Command = Command {
     aliases: &[],
     description: "Compress conversation history",
     category: CommandCategory::Agent,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_EXIT: Command = Command {
@@ -101,7 +108,6 @@ pub static CMD_EXIT: Command = Command {
     aliases: &["/quit", "/q"],
     description: "Exit Sediman",
     category: CommandCategory::General,
-    handler: |_, _| Box::new(std::future::ready(())),
 };
 
 pub static CMD_STATUS: Command = Command {
@@ -109,5 +115,4 @@ pub static CMD_STATUS: Command = Command {
     aliases: &[],
     description: "Show agent, browser, model, task status",
     category: CommandCategory::General,
-    handler: |_, _| Box::new(std::future::ready(())),
 };

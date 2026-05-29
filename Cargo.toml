@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 version = "0.1.1"
-edition = "2024"
+edition = "2021"
 license = "BSL-1.1"
 authors = ["Sediman Contributors"]
 
@@ -35,3 +35,4 @@ winit = "0.30"
 fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
+unicode-width = "0.2"

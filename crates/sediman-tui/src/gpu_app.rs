@@ -1,5 +1,9 @@
+use crate::app::App;
+
+#[cfg(feature = "gpu")]
 use std::sync::Arc;
 
+#[cfg(feature = "gpu")]
 use sediman_tui_core::{
     event::AppEvent,
     renderer::CellBuffer,
@@ -7,7 +11,7 @@ use sediman_tui_core::{
 #[cfg(feature = "gpu")]
 use sediman_tui_core::renderer::gpu::GpuRenderer;
 
-use crate::app::App;
+#[cfg(feature = "gpu")]
 use crate::update::handle_message;
 
 #[cfg(feature = "gpu")]
@@ -150,7 +154,7 @@ impl ApplicationHandler for GpuAppHandler {
                             .with_title("Sediman TUI (GPU)")
                             .with_inner_size(winit::dpi::PhysicalSize::new(960, 600)),
                     )
-                    .unwrap(),
+                    .expect("Failed to create GPU window — no display available"),
             );
             self.window = Some(win.clone());
 
@@ -226,6 +230,7 @@ impl ApplicationHandler for GpuAppHandler {
 }
 
 #[cfg(not(feature = "gpu"))]
+#[allow(dead_code)]
 pub async fn run_gpu(_app: App) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("GPU feature not enabled. Build with --features gpu");
     Ok(())

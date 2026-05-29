@@ -16,8 +16,7 @@ sediman-tui-bridge = { path = "../sediman-tui-bridge" }
 crossterm.workspace = true
 tokio.workspace = true
 futures.workspace = true
-
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 clap.workspace = true
 thiserror.workspace = true
@@ -29,6 +28,8 @@ wgpu = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 fontdue = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
+dirs = "6.0.0"
+toml = "1.1.2"
 
 [features]
 default = []
