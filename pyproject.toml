@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sediman-browse"
-version = "0.1.0"
+version = "0.1.1"
 description = "A self-improving browser agent that runs 24/7"
 readme = "README.md"
 license = {text = "BSL-1.1"}
 requires-python = ">=3.11"
 dependencies = [
     "browser-use>=0.2.0",
+    "playwright>=1.40.0",
     "openai>=1.30.0",
     "click>=8.1.0",
     "pydantic>=2.0.0",
@@ -24,6 +25,11 @@ dependencies = [
     "rich>=13.0.0",
     "prompt_toolkit>=3.0.0",
     "Pillow>=10.0.0",
+    "httpx>=0.27.0",
+    "readability-lxml>=0.8.0",
+    "markdownify>=0.12.0",
+    "lxml>=5.0.0",
+    "scikit-learn>=1.3.0",
 ]
 
 [project.scripts]
@@ -31,3 +37,7 @@ sediman = "sediman.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

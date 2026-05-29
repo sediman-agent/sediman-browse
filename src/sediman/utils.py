@@ -39,3 +39,25 @@ def relative_time(timestamp: str, now: datetime.datetime | None = None) -> str:
         return timestamp[:10]
     except Exception:
         return timestamp
+
+
+def extract_json_from_text(text: str) -> dict | list | None:
+    if not text:
+        return None
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0]
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0]
+    text = text.strip()
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+        else:
+            return None
+    import json
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None

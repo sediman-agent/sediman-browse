@@ -69,7 +69,7 @@ def validate_skill(skill: SkillData) -> ValidationResult:
 
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(all_text):
-            errors.append(f"potential prompt injection detected")
+            errors.append("potential prompt injection detected")
             break
 
     for pattern in _EXFILTRATION_PATTERNS:

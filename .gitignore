@@ -37,4 +37,8 @@ htmlcov/
 
 uv.lock
 
+target/
+
+Cargo.lock
+
 a.md

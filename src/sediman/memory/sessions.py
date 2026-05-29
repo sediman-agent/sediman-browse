@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import aiosqlite
 import structlog
 
 from sediman.store.db import get_connection as _get_conn
@@ -60,3 +59,21 @@ async def get_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def get_session_by_id(session_id: str) -> dict[str, Any] | None:
+    async with _get_conn() as conn:
+        cursor = await conn.execute(
+            "SELECT id, task, steps_json, result, created_at FROM sessions WHERE id = ?",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        steps_json = data.pop("steps_json", "[]")
+        try:
+            data["steps"] = json.loads(steps_json)
+        except (json.JSONDecodeError, TypeError):
+            data["steps"] = []
+        return data

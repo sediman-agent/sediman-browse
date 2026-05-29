@@ -1,0 +1,57 @@
+pub mod skills;
+pub mod hub;
+pub mod memory;
+pub mod model;
+pub mod schedule;
+pub mod sessions;
+pub mod browser;
+pub mod record;
+pub mod delegate;
+pub mod system;
+pub mod terminal;
+pub mod plan;
+pub mod soul;
+pub mod misc;
+
+use sediman_tui_core::CommandRegistry;
+
+pub fn register_commands(registry: &mut CommandRegistry) {
+    registry.register(&skills::CMD_SKILLS);
+    registry.register(&skills::CMD_SKILL);
+    registry.register(&skills::CMD_RUN_SKILL);
+    registry.register(&hub::CMD_HUB_BROWSE);
+    registry.register(&hub::CMD_HUB_SEARCH);
+    registry.register(&hub::CMD_HUB_INSTALL);
+    registry.register(&hub::CMD_HUB_INFO);
+    registry.register(&hub::CMD_HUB_PUBLISH);
+    registry.register(&memory::CMD_MEMORY);
+    registry.register(&memory::CMD_REMEMBER);
+    registry.register(&model::CMD_MODEL);
+    registry.register(&model::CMD_MODELS);
+    registry.register(&schedule::CMD_SCHEDULE);
+    registry.register(&schedule::CMD_SCHEDULE_ADD);
+    registry.register(&schedule::CMD_SCHEDULE_REMOVE);
+    registry.register(&sessions::CMD_SESSIONS);
+    registry.register(&sessions::CMD_RESUME);
+    registry.register(&browser::CMD_BROWSER);
+    registry.register(&browser::CMD_SCREENSHOT);
+    registry.register(&record::CMD_RECORD);
+    registry.register(&record::CMD_STOP);
+    registry.register(&delegate::CMD_DELEGATE);
+    registry.register(&delegate::CMD_PARALLEL);
+    registry.register(&system::CMD_HELP);
+    registry.register(&system::CMD_CLEAR);
+    registry.register(&system::CMD_RESET);
+    registry.register(&system::CMD_COMPRESS);
+    registry.register(&system::CMD_EXIT);
+    registry.register(&system::CMD_STATUS);
+    registry.register(&terminal::CMD_TERMINAL);
+    registry.register(&plan::CMD_PLAN);
+    registry.register(&soul::CMD_SOUL);
+    registry.register(&misc::CMD_USAGE);
+    registry.register(&misc::CMD_DOCTOR);
+    registry.register(&misc::CMD_EXPORT);
+    registry.register(&misc::CMD_BTW);
+    registry.register(&misc::CMD_COLOR);
+    registry.register(&misc::CMD_RENAME);
+}

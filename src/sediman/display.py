@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from rich.console import Console
 from rich.live import Live
@@ -223,7 +222,7 @@ def render_skill_detail(skill_data: dict, title: str | None = None) -> Panel:
     if skill_data.get("variables"):
         content.append(f"  Variables:    {', '.join(skill_data['variables'])}\n")
     if skill_data.get("warnings"):
-        content.append(f"\n  Warnings:\n", style="yellow")
+        content.append("\n  Warnings:\n", style="yellow")
         for w in skill_data["warnings"]:
             content.append(f"    - {w}\n", style="yellow")
     content.append("\n  Steps:\n")

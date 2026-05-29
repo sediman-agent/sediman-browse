@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from typing import Any, Callable
 
 import structlog
 
-from sediman.agent.screen_recorder import RecordingSession, ScreenRecorder
+from sediman.agent.screen_recorder import (
+    ActionEvent,
+    RecordingSession,
+    ScreenRecorder,
+)
 from sediman.browser.session import BrowserSession
 
 logger = structlog.get_logger()
@@ -16,6 +21,7 @@ class RecordingManager:
     def __init__(self) -> None:
         self._recorders: dict[str, ScreenRecorder] = {}
         self._sessions: dict[str, RecordingSession] = {}
+        self._active_recorder: ScreenRecorder | None = None
 
     @classmethod
     def get_instance(cls) -> RecordingManager:
@@ -30,7 +36,7 @@ class RecordingManager:
         description: str | None = None,
         fps: int = 3,
         max_duration: int = 300,
-        on_frame: Any | None = None,
+        on_frame: Callable[[Any], None] | None = None,
     ) -> RecordingSession:
         if name in self._recorders and self._recorders[name].is_recording:
             raise ValueError(f"Already recording '{name}'. Stop it first.")
@@ -46,6 +52,7 @@ class RecordingManager:
 
         self._recorders[name] = recorder
         self._sessions[session.id] = session
+        self._active_recorder = recorder
 
         logger.info("recording_manager_started", name=name, session_id=session.id)
         return session
@@ -57,6 +64,9 @@ class RecordingManager:
 
         session = await recorder.stop()
         self._sessions[session.id] = session
+
+        if self._active_recorder is recorder:
+            self._active_recorder = None
 
         logger.info(
             "recording_manager_stopped",
@@ -96,5 +106,55 @@ class RecordingManager:
     def get_recorder(self, name: str) -> ScreenRecorder | None:
         return self._recorders.get(name)
 
+    def get_active_recorder(self) -> ScreenRecorder | None:
+        if self._active_recorder and self._active_recorder.is_recording:
+            return self._active_recorder
+        for recorder in self._recorders.values():
+            if recorder.is_recording:
+                self._active_recorder = recorder
+                return recorder
+        return None
+
+    def create_on_step_callback(
+        self, recording_name: str | None = None
+    ) -> Callable[[str, str], None] | None:
+        recorder = (
+            self._recorders.get(recording_name)
+            if recording_name
+            else self.get_active_recorder()
+        )
+        if not recorder or not recorder.is_recording:
+            return None
+
+        def on_browser_step(action_name: str, url: str) -> None:
+            try:
+                detail = f"{action_name}"
+                if url:
+                    detail += f" | {url[:100]}"
+                asyncio.get_event_loop().create_task(
+                    recorder.inject_action_marker(action_name, detail)
+                )
+            except RuntimeError:
+                try:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(
+                        recorder.inject_action_marker(action_name, f"{action_name} | {url[:100]}")
+                    )
+                    loop.close()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        return on_browser_step
+
+    async def drain_active_events(self) -> list[ActionEvent]:
+        recorder = self.get_active_recorder()
+        if not recorder:
+            return []
+        return await recorder.drain_page_events()
+
     def cleanup(self, name: str) -> None:
-        self._recorders.pop(name, None)
+        recorder = self._recorders.pop(name, None)
+        if self._active_recorder is recorder:
+            self._active_recorder = None

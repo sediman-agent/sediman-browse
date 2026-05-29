@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -14,16 +14,18 @@ _STALE_THRESHOLD_DAYS = 30
 
 
 class SkillAuditor:
-    """Proactive skill health checker — runs alongside memory review cycle."""
-
-    def __init__(self, llm: LLMProvider):
+    def __init__(self, llm: LLMProvider, engine: Any | None = None):
         self.llm = llm
+        self._engine = engine
 
     async def audit(self) -> dict[str, Any]:
         from sediman.skills.engine import SkillEngine
 
-        engine = SkillEngine()
-        skills = engine.list_skills()
+        engine = self._engine or SkillEngine()
+        if hasattr(engine, 'list_skills_full'):
+            skills = engine.list_skills_full()
+        else:
+            skills = engine.list_skills()
         if not skills:
             return {"actions": [], "summary": "No skills to audit."}
 

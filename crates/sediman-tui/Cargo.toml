@@ -1,0 +1,33 @@
+[package]
+name = "sediman-tui"
+description = "Sediman TUI application — Rust terminal frontend for the Sediman browser agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sediman-tui"
+path = "src/main.rs"
+
+[dependencies]
+sediman-tui-core = { path = "../sediman-tui-core" }
+sediman-tui-bridge = { path = "../sediman-tui-bridge" }
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+comrak.workspace = true
+syntect.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+arboard.workspace = true
+url.workspace = true

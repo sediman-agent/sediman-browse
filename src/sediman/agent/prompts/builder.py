@@ -11,11 +11,17 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 SOUL_FILE = Path.home() / ".sediman" / "SOUL.md"
 CONTEXT_FILE = Path.home() / ".sediman" / "CONTEXT.md"
 
+_template_cache: dict[str, str] = {}
+
 
 def _load_template(name: str) -> str:
+    if name in _template_cache:
+        return _template_cache[name]
     path = TEMPLATES_DIR / name
     if path.exists():
-        return path.read_text()
+        content = path.read_text()
+        _template_cache[name] = content
+        return content
     logger.warning("template_not_found", name=name)
     return ""
 
@@ -46,6 +52,8 @@ class PromptBuilder:
         self._soul_override = soul_override
         self._project_context = project_context
         self._template_name = "system_flash.md" if flash_mode else "system_full.md"
+        self._soul = soul_override if soul_override is not None else load_soul()
+        self._project_ctx = project_context if project_context is not None else load_project_context()
 
     def build_system_prompt(
         self,
@@ -57,14 +65,14 @@ class PromptBuilder:
         template = _load_template(self._template_name)
         sections.append(template)
 
-        soul = self._soul_override or load_soul()
+        soul = self._soul
         if soul.strip():
             sections.append(f"<persona>\n{soul.strip()}\n</persona>")
 
         if memory_context and memory_context.strip():
             sections.append(memory_context.strip())
 
-        ctx = self._project_context or load_project_context()
+        ctx = self._project_ctx
         if ctx.strip():
             sections.append(f"<project_context>\n{ctx.strip()}\n</project_context>")
 

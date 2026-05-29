@@ -27,6 +27,34 @@ CREATE TABLE IF NOT EXISTS session_steps (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS trajectories (
+    id TEXT PRIMARY KEY,
+    task TEXT NOT NULL,
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    result TEXT,
+    success INTEGER NOT NULL DEFAULT 0,
+    skill_name TEXT,
+    error_type TEXT,
+    duration_ms INTEGER,
+    screenshot_dir TEXT,
+    metadata_json TEXT DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS trajectory_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trajectory_id TEXT NOT NULL REFERENCES trajectories(id),
+    rating INTEGER NOT NULL CHECK(rating >= -1 AND rating <= 1),
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trajectories_success ON trajectories(success);
+CREATE INDEX IF NOT EXISTS idx_trajectories_skill ON trajectories(skill_name);
+CREATE INDEX IF NOT EXISTS idx_trajectories_task ON trajectories(task);
+CREATE INDEX IF NOT EXISTS idx_trajectories_created ON trajectories(created_at);
+CREATE INDEX IF NOT EXISTS idx_traj_prefs_traj ON trajectory_preferences(trajectory_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
     id, task, result,
     content=sessions,

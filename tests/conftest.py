@@ -30,6 +30,7 @@ def tmp_sediman_dir(tmp_path: Path):
          patch("sediman.agent.soul.SOUL_FILE", tmp_path / "SOUL.md"), \
          patch("sediman.skills.engine.SKILLS_DIR", tmp_path / "skills"), \
          patch("sediman.scheduler.cron.JOBS_DIR", tmp_path / "cron"), \
+         patch("sediman.scheduler.cron.RESULTS_FILE", tmp_path / "cron" / "results.jsonl"), \
          patch("sediman.browser.session.SESSION_DIR", tmp_path / "sessions"), \
          patch("sediman.browser.session.DATA_DIR", tmp_path):
         yield tmp_path

@@ -8,10 +8,129 @@ from typing import Any
 
 
 @dataclass
+class StepData:
+    description: str = ""
+    action_type: str = ""
+    url: str | None = None
+    selector: str | None = None
+    text: str | None = None
+    expected_outcome: str | None = None
+    index: int | None = None
+    duration_ms: int | None = None
+
+    def to_string(self) -> str:
+        if self.action_type == "navigate" and self.url:
+            return f"Navigate to {self.url}"
+        if self.action_type == "click":
+            parts = ["Click"]
+            if self.index is not None:
+                parts.append(f"element {self.index}")
+            if self.text:
+                parts.append(f'"{self.text}"')
+            if self.selector:
+                parts.append(f"({self.selector})")
+            return " ".join(parts)
+        if self.action_type == "input":
+            parts = ["Type"]
+            if self.text:
+                parts.append(f'"{self.text[:50]}"')
+            if self.selector:
+                parts.append(f"in {self.selector}")
+            return " ".join(parts)
+        if self.action_type == "extract":
+            return "Extract data from page"
+        if self.action_type == "scroll":
+            return "Scroll page"
+        if self.action_type == "search":
+            return f"Search: {self.text}" if self.text else "Search"
+        if self.url:
+            return f"{self.description} {self.url}" if self.description else self.url
+        return self.description
+
+    def to_json(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"description": self.description}
+        if self.action_type:
+            d["action_type"] = self.action_type
+        if self.url:
+            d["url"] = self.url
+        if self.selector:
+            d["selector"] = self.selector
+        if self.text:
+            d["text"] = self.text
+        if self.expected_outcome:
+            d["expected_outcome"] = self.expected_outcome
+        if self.index is not None:
+            d["index"] = self.index
+        return d
+
+    @classmethod
+    def from_json(cls, data: str | dict[str, Any]) -> StepData:
+        if isinstance(data, str):
+            return cls(description=data)
+        return cls(
+            description=data.get("description", ""),
+            action_type=data.get("action_type", ""),
+            url=data.get("url"),
+            selector=data.get("selector"),
+            text=data.get("text"),
+            expected_outcome=data.get("expected_outcome"),
+            index=data.get("index"),
+            duration_ms=data.get("duration_ms"),
+        )
+
+    @classmethod
+    def from_browser_action(cls, action: dict[str, Any]) -> StepData:
+        action_type = action.get("action", action.get("type", ""))
+        args = action.get("arguments", action)
+        interacted = action.get("interacted_element", {})
+        description = cls._build_description(action_type, {**args, **interacted})
+        return cls(
+            description=description,
+            action_type=action_type,
+            url=args.get("url") or interacted.get("url"),
+            selector=args.get("selector") or interacted.get("selector"),
+            text=args.get("text") or interacted.get("text"),
+            index=args.get("index") or interacted.get("index"),
+            expected_outcome=args.get("expected_outcome"),
+        )
+
+    @staticmethod
+    def _build_description(action_type: str, args: dict[str, Any]) -> str:
+        if action_type == "navigate":
+            return f"Navigate to {args.get('url', 'the page')}"
+        if action_type == "click":
+            idx = args.get("index", "")
+            text = args.get("text", args.get("label", ""))
+            parts = ["Click"]
+            if idx:
+                parts.append(f"element {idx}")
+            if text:
+                parts.append(f'"{text}"')
+            return " ".join(parts)
+        if action_type == "input":
+            text = args.get("text", "")
+            field = args.get("selector", args.get("label", ""))
+            parts = ["Type"]
+            if text:
+                parts.append(f'"{text[:50]}"')
+            if field:
+                parts.append(f"in {field}")
+            return " ".join(parts)
+        if action_type == "extract":
+            return "Extract data from page"
+        if action_type == "scroll":
+            return "Scroll the page"
+        if action_type == "search":
+            return f"Search for {args.get('query', 'the query')}"
+        return args.get("text", str(args)[:100])
+
+
+@dataclass
 class SkillData:
     name: str
     description: str
     steps: list[str] = field(default_factory=list)
+    structured_steps: list[dict[str, Any]] = field(default_factory=list)
     category: str = "general"
     version: int = 1
     variables: list[str] = field(default_factory=list)
@@ -39,6 +158,8 @@ class SkillData:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.structured_steps:
+            d["structured_steps"] = self.structured_steps
         if self.variables:
             d["variables"] = self.variables
         if self.schedule:
@@ -100,7 +221,7 @@ class SkillData:
                 lines.append(f"- `{var}`")
         if self.schedule:
             lines.append("")
-            lines.append(f"## Schedule")
+            lines.append("## Schedule")
             lines.append(f"Recommended: `{self.schedule}`")
         if self.when_to_use:
             lines.append("")
@@ -181,6 +302,7 @@ def parse_skill_json(content: str) -> SkillData | None:
         name=data["name"],
         description=data["description"],
         steps=data.get("steps", []),
+        structured_steps=data.get("structured_steps", []),
         category=data.get("category", "general"),
         version=data.get("version", 1),
         variables=data.get("variables", []),
@@ -203,7 +325,6 @@ def load_skill(skill_dir: Path) -> SkillData | None:
         parsed = parse_skill_json(skill_json.read_text())
         if parsed:
             if not parsed.created_at:
-                import os
                 stat = skill_json.stat()
                 from datetime import datetime, timezone
                 parsed.created_at = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat()
@@ -214,7 +335,6 @@ def load_skill(skill_dir: Path) -> SkillData | None:
         parsed = parse_skill_md(skill_md.read_text())
         if parsed:
             if not parsed.created_at:
-                import os
                 stat = skill_md.stat()
                 from datetime import datetime, timezone
                 parsed.created_at = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat()
@@ -236,7 +356,6 @@ def _extract_steps_from_body(body: str) -> list[str]:
 def _parse_simple_yaml(text: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     current_key: str | None = None
-    current_indent = 0
 
     for line in text.split("\n"):
         stripped = line.rstrip()
@@ -254,7 +373,6 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
             else:
                 result[key] = {}
                 current_key = key
-                current_indent = 0
         elif current_key and indent > 0:
             stripped_inner = stripped.lstrip()
             if ":" in stripped_inner and not stripped_inner.startswith("-"):

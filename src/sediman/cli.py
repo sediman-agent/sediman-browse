@@ -52,12 +52,35 @@ def main() -> None:
 @main.command()
 @click.argument("task")
 @click.option("--model", default=None, help="LLM model to use")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider (openai, ollama)")
-@click.option("--base-url", default=None, help="Override the default LLM API endpoint (e.g. for local/proxy)")
-@click.option("--headless/--no-headless", default=False, help="Run browser headless (no visible window)")
-@click.option("--timeout", default=None, type=int, help="Max seconds to run before cancelling")
+@click.option(
+    "--provider",
+    default="openai",
+    type=PROVIDER_CHOICES,
+    help="LLM provider (openai, ollama)",
+)
+@click.option(
+    "--base-url",
+    default=None,
+    help="Override the default LLM API endpoint (e.g. for local/proxy)",
+)
+@click.option(
+    "--headless/--no-headless",
+    default=False,
+    help="Run browser headless (no visible window)",
+)
+@click.option(
+    "--timeout", default=None, type=int, help="Max seconds to run before cancelling"
+)
 @click.option("--verbose", is_flag=True, help="Show detailed logs")
-def run(task: str, model: str | None, provider: str, base_url: str | None, headless: bool, timeout: int | None, verbose: bool) -> None:
+def run(
+    task: str,
+    model: str | None,
+    provider: str,
+    base_url: str | None,
+    headless: bool,
+    timeout: int | None,
+    verbose: bool,
+) -> None:
     """Run a one-shot browser task."""
     if verbose:
         structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(10))
@@ -65,6 +88,7 @@ def run(task: str, model: str | None, provider: str, base_url: str | None, headl
     _validate_startup(provider, model, base_url)
 
     from sediman.logging import suppress_noisy_loggers
+
     suppress_noisy_loggers()
 
     try:
@@ -73,28 +97,39 @@ def run(task: str, model: str | None, provider: str, base_url: str | None, headl
         pass
     except Exception as exc:
         from sediman.display import friendly_error
+
         friendly_error(exc)
         sys.exit(1)
 
 
 @main.command()
 @click.option("--model", default=None, help="LLM model to use")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider (openai, ollama)")
+@click.option(
+    "--provider",
+    default="openai",
+    type=PROVIDER_CHOICES,
+    help="LLM provider (openai, ollama)",
+)
 @click.option("--base-url", default=None, help="Override the default LLM API endpoint")
 @click.option("--headless/--no-headless", default=False, help="Run browser headless")
-def chat(model: str | None, provider: str, base_url: str | None, headless: bool) -> None:
+def chat(
+    model: str | None, provider: str, base_url: str | None, headless: bool
+) -> None:
     """Interactive agent session with slash commands."""
     _validate_startup(provider, model, base_url)
 
     from sediman.tui import SedimanTUI
 
-    tui = SedimanTUI(provider=provider, model=model, base_url=base_url, headless=headless)
+    tui = SedimanTUI(
+        provider=provider, model=model, base_url=base_url, headless=headless
+    )
     try:
         tui.run()
     except KeyboardInterrupt:
         pass
     except Exception as exc:
         from sediman.display import friendly_error
+
         friendly_error(exc)
         sys.exit(1)
 
@@ -115,13 +150,18 @@ def skill_list() -> None:
 
     if not skills:
         from sediman.display import console
-        console.print("  No skills found. Skills are created automatically after complex tasks.")
+
+        console.print(
+            "  No skills found. Skills are created automatically after complex tasks."
+        )
         return
 
     from rich.table import Table
     from sediman.display import console
 
-    table = Table(title="Skills", show_header=True, header_style="cyan", box=None, padding=(0, 2))
+    table = Table(
+        title="Skills", show_header=True, header_style="cyan", box=None, padding=(0, 2)
+    )
     table.add_column("Name", style="green")
     table.add_column("Category", style="dim")
     table.add_column("Description")
@@ -135,10 +175,14 @@ def skill_list() -> None:
 @skill.command("run")
 @click.argument("name")
 @click.option("--model", default=None, help="LLM model to use")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--base-url", default=None, help="Override the default LLM API endpoint")
 @click.option("--headless/--no-headless", default=False, help="Run browser headless")
-def skill_run(name: str, model: str | None, provider: str, base_url: str | None, headless: bool) -> None:
+def skill_run(
+    name: str, model: str | None, provider: str, base_url: str | None, headless: bool
+) -> None:
     """Run a saved skill."""
     from sediman.skills.engine import SkillEngine
 
@@ -147,15 +191,21 @@ def skill_run(name: str, model: str | None, provider: str, base_url: str | None,
 
     if not skill_data:
         from sediman.display import print_error
-        print_error(f"Skill '{name}' not found.", "Use 'sediman skill list' to see available skills.")
+
+        print_error(
+            f"Skill '{name}' not found.",
+            "Use 'sediman skill list' to see available skills.",
+        )
         sys.exit(1)
 
     _validate_startup(provider, model, base_url)
 
     from sediman.logging import suppress_noisy_loggers
+
     suppress_noisy_loggers()
 
     from sediman.display import print_startup_banner
+
     print_startup_banner(provider, model, headless, mode=f"skill: {name}")
 
     try:
@@ -164,6 +214,7 @@ def skill_run(name: str, model: str | None, provider: str, base_url: str | None,
         pass
     except Exception as exc:
         from sediman.display import friendly_error
+
         friendly_error(exc)
         sys.exit(1)
 
@@ -179,6 +230,7 @@ def skill_show(name: str) -> None:
 
     if not skill_data:
         from sediman.display import print_error
+
         print_error(f"Skill '{name}' not found.")
         sys.exit(1)
 
@@ -189,7 +241,7 @@ def skill_show(name: str) -> None:
 
 @skill.command("delete")
 @click.argument("name")
-@click.confirmation_option(prompt=f"Delete this skill?")
+@click.confirmation_option(prompt="Delete this skill?")
 def skill_delete(name: str) -> None:
     """Delete a skill."""
     from sediman.skills.engine import SkillEngine
@@ -197,9 +249,11 @@ def skill_delete(name: str) -> None:
     engine = SkillEngine()
     if engine.delete(name):
         from sediman.display import print_success
+
         print_success("Deleted", f"Skill '{name}' removed.")
     else:
         from sediman.display import print_error
+
         print_error(f"Skill '{name}' not found.")
         sys.exit(1)
 
@@ -210,7 +264,13 @@ def skill_delete(name: str) -> None:
 @click.option("--steps", multiple=True, help="Skill steps (repeatable)")
 @click.option("--category", default=None, help="Skill category")
 @click.option("--from", "from_file", default=None, help="Import from JSON/YAML file")
-def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], category: str | None, from_file: str | None) -> None:
+def skill_add(
+    name: str | None,
+    desc: str | None,
+    steps: tuple[str, ...],
+    category: str | None,
+    from_file: str | None,
+) -> None:
     """Create a new skill. Prompts for missing fields.
 
     \b
@@ -225,6 +285,7 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
         p = Path(from_file)
         if not p.exists():
             from sediman.display import print_error
+
             print_error(f"File not found: {from_file}")
             sys.exit(1)
 
@@ -232,13 +293,16 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
         if p.suffix in (".yaml", ".yml"):
             try:
                 import yaml
+
                 data = yaml.safe_load(raw)
             except ImportError:
                 from sediman.display import print_error
+
                 print_error("PyYAML not installed.", "Use JSON or: pip install pyyaml")
                 sys.exit(1)
             except Exception as exc:
                 from sediman.display import print_error
+
                 print_error(f"Invalid YAML file: {exc}")
                 sys.exit(1)
         else:
@@ -246,6 +310,7 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
                 data = json.loads(raw)
             except json.JSONDecodeError as exc:
                 from sediman.display import print_error
+
                 print_error(f"Invalid JSON file: {exc}")
                 sys.exit(1)
 
@@ -264,6 +329,7 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
         desc = click.prompt("Description")
     if not steps:
         from sediman.display import console
+
         console.print("  Add steps (enter empty line to finish):")
         step_list: list[str] = []
         i = 1
@@ -284,10 +350,12 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
         engine.create(name=name, description=desc, steps=list(steps), category=category)
     except ValueError as e:
         from sediman.display import print_error
+
         print_error(str(e))
         sys.exit(1)
 
     from sediman.display import print_success
+
     print_success("Created", f"Skill '{name}' with {len(steps)} step(s).")
 
 
@@ -295,11 +363,28 @@ def skill_add(name: str | None, desc: str | None, steps: tuple[str, ...], catego
 @click.argument("name")
 @click.option("--desc", default=None, help="Skill description")
 @click.option("--model", default=None, help="LLM model to use")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--base-url", default=None, help="Override the default LLM API endpoint")
-@click.option("--fps", default=3, type=int, help="Frames per second for recording (default: 3)")
-@click.option("--max-duration", default=300, type=int, help="Max recording duration in seconds (default: 300)")
-def skill_record(name: str, desc: str | None, model: str | None, provider: str, base_url: str | None, fps: int, max_duration: int) -> None:
+@click.option(
+    "--fps", default=3, type=int, help="Frames per second for recording (default: 3)"
+)
+@click.option(
+    "--max-duration",
+    default=300,
+    type=int,
+    help="Max recording duration in seconds (default: 300)",
+)
+def skill_record(
+    name: str,
+    desc: str | None,
+    model: str | None,
+    provider: str,
+    base_url: str | None,
+    fps: int,
+    max_duration: int,
+) -> None:
     """Record your browser actions as a reusable skill.
 
     Opens a browser. Perform your task. Press Ctrl+C when done.
@@ -312,14 +397,18 @@ def skill_record(name: str, desc: str | None, model: str | None, provider: str, 
     _validate_startup(provider, model, base_url)
 
     from sediman.logging import suppress_noisy_loggers
+
     suppress_noisy_loggers()
 
     try:
-        asyncio.run(_record_skill(name, desc, model, provider, base_url, fps, max_duration))
+        asyncio.run(
+            _record_skill(name, desc, model, provider, base_url, fps, max_duration)
+        )
     except KeyboardInterrupt:
         pass
     except Exception as exc:
         from sediman.display import friendly_error
+
         friendly_error(exc)
         sys.exit(1)
 
@@ -340,6 +429,7 @@ def skill_install_bundled() -> None:
 
     if not bundled_dir.exists():
         from sediman.display import print_error
+
         print_error("No bundled skills found.", "Run from the project root directory.")
         sys.exit(1)
 
@@ -356,6 +446,7 @@ def skill_install_bundled() -> None:
         existing = engine.read(data["name"])
         if existing:
             from sediman.display import console
+
             console.print(f"  Skipping {data['name']} (already exists)")
             continue
 
@@ -366,14 +457,176 @@ def skill_install_bundled() -> None:
             category=data.get("category", "bundled"),
         )
         from sediman.display import console
+
         console.print(f"  Installed {data['name']}: {data['description']}")
         installed += 1
 
     from sediman.display import print_success
+
     print_success("Done", f"{installed} skill(s) installed.")
 
 
-@skill.group("hub")
+@skill.command("install")
+@click.argument("ref")
+@click.option("--force", is_flag=True, help="Overwrite existing skill")
+@click.option(
+    "--from",
+    "from_source",
+    type=click.Choice(["auto", "github", "hub"]),
+    default="auto",
+)
+def skill_install_new(ref: str, force: bool, from_source: str) -> None:
+    """Install a skill from GitHub (owner/repo@skill) or hub (name)."""
+    from sediman.skills.engine import SkillEngine
+
+    engine = SkillEngine()
+
+    use_github = from_source == "github" or (from_source == "auto" and "/" in ref)
+
+    if use_github:
+        from sediman.skills.hub import GitHubInstaller
+
+        ok, msg = GitHubInstaller().install(ref, engine, force=force)
+    else:
+        from sediman.skills.hub import HubClient
+
+        ok, msg = HubClient().install(ref, engine, force=force)
+
+    if ok:
+        from sediman.display import print_success
+
+        print_success("Installed", msg)
+    else:
+        from sediman.display import print_error
+
+        print_error("Install failed", msg)
+        raise SystemExit(1)
+
+
+@skill.command("search")
+@click.argument("query")
+@click.option("--category", default=None, help="Filter by category")
+def skill_search_new(query: str, category: str | None) -> None:
+    """Search the Skills Hub for matching skills."""
+    from sediman.skills.hub import HubClient
+
+    client = HubClient()
+    if category:
+        skills = client.browse(category=category)
+        query_lower = query.lower()
+        skills = [
+            s for s in skills if query_lower in f"{s.name} {s.description}".lower()
+        ]
+    else:
+        skills = client.search(query)
+    if not skills:
+        click.echo(f"No skills matching '{query}'.")
+        click.echo("Try GitHub: sediman skill install owner/repo@skill-name")
+        return
+    for s in skills:
+        click.echo(f"  {s.name:25s} [{s.category}] {s.description[:60]}")
+
+
+@skill.command("update")
+@click.argument("name", required=False)
+@click.option("--all", "update_all", is_flag=True, help="Update all tracked skills")
+def skill_update_new(name: str | None, update_all: bool) -> None:
+    """Update a skill from its source."""
+    from sediman.skills.engine import SkillEngine
+    from sediman.skills.hub import GitHubInstaller, SkillLockFile
+
+    engine = SkillEngine()
+    lock = SkillLockFile()
+    installer = GitHubInstaller()
+
+    if update_all:
+        entries = lock.list_all()
+        if not entries:
+            click.echo("No tracked skills to update.")
+            return
+        updated = 0
+        for skill_name, entry in entries.items():
+            if entry.source_type != "github":
+                continue
+            ok, msg = installer.update_skill(skill_name, engine)
+            if ok:
+                updated += 1
+                click.echo(f"  + {msg}")
+            else:
+                click.echo(f"  {msg}")
+        click.echo(f"{updated} skill(s) updated." if updated else "All up to date.")
+        return
+
+    if not name:
+        click.echo("Usage: sediman skill update <name>  or  sediman skill update --all")
+        raise SystemExit(1)
+
+    ok, msg = installer.update_skill(name, engine)
+    if ok:
+        click.echo(f"  + {msg}")
+    else:
+        click.echo(f"  X {msg}")
+        raise SystemExit(1)
+
+
+@skill.command("outdated")
+def skill_outdated_new() -> None:
+    """Check for skill updates from external sources."""
+    from sediman.skills.engine import SkillEngine
+    from sediman.skills.hub import GitHubInstaller, SkillLockFile
+
+    engine = SkillEngine()
+    lock = SkillLockFile()
+    installer = GitHubInstaller()
+    entries = lock.list_all()
+
+    if not entries:
+        click.echo("No tracked skills from external sources.")
+        return
+
+    found = False
+    for skill_name, entry in entries.items():
+        if entry.source_type != "github":
+            continue
+        has_update, msg = installer.check_update(skill_name, engine)
+        if has_update:
+            found = True
+            click.echo(f"  {skill_name}: {msg}")
+    if not found:
+        click.echo("All skills are up to date.")
+
+
+@skill.command("info")
+@click.argument("name")
+def skill_info_new(name: str) -> None:
+    """Show skill provenance and source info."""
+    from sediman.skills.engine import SkillEngine
+    from sediman.skills.hub import SkillLockFile
+
+    engine = SkillEngine()
+    data = engine.read(name)
+    if not data:
+        click.echo(f"Skill '{name}' not found.")
+        raise SystemExit(1)
+
+    click.echo(f"  Name:        {data.get('name')}")
+    click.echo(f"  Description: {data.get('description', '')[:120]}")
+    click.echo(f"  Category:    {data.get('category')}")
+    click.echo(f"  Version:     v{data.get('version', 1)}")
+
+    entry = SkillLockFile().get(name)
+    if entry:
+        click.echo(f"  Source:      {entry.source}")
+        click.echo(f"  Type:        {entry.source_type}")
+        click.echo(f"  URL:         {entry.source_url}")
+        click.echo(
+            f"  Installed:   {entry.installed_at[:19] if entry.installed_at else 'unknown'}"
+        )
+    else:
+        click.echo("  Source:      local")
+
+
+@skill.group("hub", hidden=True)
 def skill_hub() -> None:
     """Browse and install skills from the Skills Hub."""
     pass
@@ -395,7 +648,13 @@ def hub_browse(category: str | None) -> None:
 
     from rich.table import Table
 
-    table = Table(title=f"Skills Hub ({len(skills)} skills)", show_header=True, header_style="cyan", box=None, padding=(0, 2))
+    table = Table(
+        title=f"Skills Hub ({len(skills)} skills)",
+        show_header=True,
+        header_style="cyan",
+        box=None,
+        padding=(0, 2),
+    )
     table.add_column("Name", style="cyan")
     table.add_column("Trust", style="green")
     table.add_column("Category", style="dim")
@@ -418,12 +677,20 @@ def hub_search(query: str) -> None:
     skills = client.search(query)
     if not skills:
         from sediman.display import console
+
         console.print(f"  No skills matching '{query}'.")
         return
 
     from rich.table import Table
     from sediman.display import console
-    table = Table(title=f"Results for '{query}'", show_header=True, header_style="cyan", box=None, padding=(0, 2))
+
+    table = Table(
+        title=f"Results for '{query}'",
+        show_header=True,
+        header_style="cyan",
+        box=None,
+        padding=(0, 2),
+    )
     table.add_column("Name", style="cyan")
     table.add_column("Description")
 
@@ -446,9 +713,11 @@ def hub_install(name: str, force: bool) -> None:
     ok, msg = client.install(name, engine, force=force)
     if ok:
         from sediman.display import print_success
+
         print_success("Installed", msg)
     else:
         from sediman.display import print_error
+
         print_error(msg)
 
 
@@ -462,6 +731,7 @@ def hub_info(name: str) -> None:
     info = client.info(name)
     if not info:
         from sediman.display import print_error
+
         print_error(f"Skill '{name}' not found in hub.")
         return
 
@@ -482,6 +752,7 @@ def hub_publish(name: str) -> None:
     data = engine.read(name)
     if not data:
         from sediman.display import print_error
+
         print_error(f"Skill '{name}' not found locally.")
         return
 
@@ -497,9 +768,11 @@ def hub_publish(name: str) -> None:
     ok, msg = client.publish(skill)
     if ok:
         from sediman.display import print_success
+
         print_success("Validated", msg)
     else:
         from sediman.display import print_error
+
         print_error(msg)
 
 
@@ -519,12 +792,20 @@ def schedule_list() -> None:
 
     if not jobs:
         from sediman.display import console
+
         console.print("  No scheduled tasks.")
         return
 
     from rich.table import Table
     from sediman.display import console
-    table = Table(title="Scheduled Tasks", show_header=True, header_style="cyan", box=None, padding=(0, 2))
+
+    table = Table(
+        title="Scheduled Tasks",
+        show_header=True,
+        header_style="cyan",
+        box=None,
+        padding=(0, 2),
+    )
     table.add_column("Status", width=1)
     table.add_column("ID", style="dim")
     table.add_column("Cron")
@@ -542,10 +823,19 @@ def schedule_list() -> None:
 @click.argument("cron_expr")
 @click.argument("task", required=False, default=None)
 @click.option("--skill", default=None, help="Run a specific skill instead of a task")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--model", default=None, help="LLM model")
 @click.option("--base-url", default=None, help="Custom API base URL")
-def schedule_add(cron_expr: str, task: str | None, skill: str | None, provider: str, model: str | None, base_url: str | None) -> None:
+def schedule_add(
+    cron_expr: str,
+    task: str | None,
+    skill: str | None,
+    provider: str,
+    model: str | None,
+    base_url: str | None,
+) -> None:
     """Add a scheduled task.
 
     \b
@@ -554,6 +844,7 @@ def schedule_add(cron_expr: str, task: str | None, skill: str | None, provider: 
     """
     if not task and not skill:
         from sediman.display import print_error
+
         print_error("Provide a task description or --skill.")
         sys.exit(1)
 
@@ -569,12 +860,13 @@ def schedule_add(cron_expr: str, task: str | None, skill: str | None, provider: 
         base_url=base_url,
     )
     from sediman.display import print_success
+
     print_success("Scheduled", f"Job [{job_id[:8]}] {cron_expr} → {task or skill}")
 
 
 @schedule.command("remove")
 @click.argument("job_id")
-@click.confirmation_option(prompt=f"Remove this scheduled task?")
+@click.confirmation_option(prompt="Remove this scheduled task?")
 def schedule_remove(job_id: str) -> None:
     """Remove a scheduled task. Accepts full or partial job ID."""
     from sediman.scheduler.cron import CronManager
@@ -583,15 +875,22 @@ def schedule_remove(job_id: str) -> None:
     removed = cron.remove_job(job_id.strip())
     if removed:
         from sediman.display import print_success
+
         print_success("Removed", f"Scheduled job {job_id.strip()[:8]}")
     else:
         from sediman.display import print_error
-        print_error(f"Job '{job_id.strip()[:8]}' not found.", "Use 'sediman schedule list' to see job IDs.")
+
+        print_error(
+            f"Job '{job_id.strip()[:8]}' not found.",
+            "Use 'sediman schedule list' to see job IDs.",
+        )
         sys.exit(1)
 
 
 @schedule.command("start")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--model", default=None, help="LLM model")
 @click.option("--base-url", default=None, help="Custom API base URL")
 def schedule_start(provider: str, model: str | None, base_url: str | None) -> None:
@@ -601,9 +900,11 @@ def schedule_start(provider: str, model: str | None, base_url: str | None) -> No
     Use 'sediman serve' instead if you want API + scheduler together.
     """
     from sediman.logging import suppress_noisy_loggers
+
     suppress_noisy_loggers()
 
     from sediman.display import print_startup_banner
+
     print_startup_banner(provider, model, headless=True, mode="cron daemon")
 
     from sediman.scheduler.cron import CronManager
@@ -612,7 +913,9 @@ def schedule_start(provider: str, model: str | None, base_url: str | None) -> No
     cron = CronManager()
     jobs = cron.list_jobs()
     if not jobs:
-        console.print("  [yellow]No scheduled tasks. Add one with: [cyan]sediman schedule add[/cyan][/yellow]")
+        console.print(
+            "  [yellow]No scheduled tasks. Add one with: [cyan]sediman schedule add[/cyan][/yellow]"
+        )
         return
 
     for j in jobs:
@@ -624,15 +927,20 @@ def schedule_start(provider: str, model: str | None, base_url: str | None) -> No
     console.print()
 
     from sediman.scheduler.cron import start_scheduler
+
     start_scheduler()
 
 
 @schedule.command("register-skill")
 @click.argument("skill_name")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--model", default=None, help="LLM model")
 @click.option("--base-url", default=None, help="Custom API base URL")
-def schedule_register_skill(skill_name: str, provider: str, model: str | None, base_url: str | None) -> None:
+def schedule_register_skill(
+    skill_name: str, provider: str, model: str | None, base_url: str | None
+) -> None:
     """Register a skill's built-in schedule as a cron job."""
     from sediman.skills.engine import SkillEngine
     from sediman.scheduler.cron import CronManager
@@ -641,13 +949,18 @@ def schedule_register_skill(skill_name: str, provider: str, model: str | None, b
     data = engine.read(skill_name)
     if not data:
         from sediman.display import print_error
+
         print_error(f"Skill '{skill_name}' not found.")
         sys.exit(1)
 
     schedule_expr = data.get("schedule")
     if not schedule_expr:
         from sediman.display import print_error
-        print_error(f"Skill '{skill_name}' has no schedule defined.", "Only skills with a schedule field can be registered.")
+
+        print_error(
+            f"Skill '{skill_name}' has no schedule defined.",
+            "Only skills with a schedule field can be registered.",
+        )
         sys.exit(1)
 
     cron = CronManager()
@@ -660,7 +973,11 @@ def schedule_register_skill(skill_name: str, provider: str, model: str | None, b
         base_url=base_url,
     )
     from sediman.display import print_success
-    print_success("Registered", f"'{skill_name}' as cron job [{job_id[:8]}], schedule: {schedule_expr}")
+
+    print_success(
+        "Registered",
+        f"'{skill_name}' as cron job [{job_id[:8]}], schedule: {schedule_expr}",
+    )
 
 
 @main.command()
@@ -673,7 +990,9 @@ def memory() -> None:
     all_entries = store.get_all_entries()
 
     if not any(all_entries.values()):
-        console.print("  No memory stored yet. Memory is built automatically as you use the agent.")
+        console.print(
+            "  No memory stored yet. Memory is built automatically as you use the agent."
+        )
         return
 
     mem_usage = store.get_usage("memory")
@@ -685,7 +1004,9 @@ def memory() -> None:
     console.print()
 
     if user_usage.entries:
-        console.print(f"  [green bold]USER PROFILE [{user_usage.formatted}][/green bold]")
+        console.print(
+            f"  [green bold]USER PROFILE [{user_usage.formatted}][/green bold]"
+        )
         for i, entry in enumerate(user_usage.entries, 1):
             console.print(f"    {i}. {entry[:120]}")
         console.print()
@@ -698,17 +1019,26 @@ def sessions() -> None:
         asyncio.run(_show_sessions())
     except Exception as exc:
         from sediman.display import friendly_error
+
         friendly_error(exc)
         sys.exit(1)
 
 
 @main.command()
-@click.option("--host", default="0.0.0.0", help="API server host (default: 0.0.0.0 — all interfaces)")
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    help="API server host (default: 0.0.0.0 — all interfaces)",
+)
 @click.option("--port", default=8080, help="API server port")
-@click.option("--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider")
+@click.option(
+    "--provider", default="openai", type=PROVIDER_CHOICES, help="LLM provider"
+)
 @click.option("--model", default=None, help="LLM model to use")
 @click.option("--base-url", default=None, help="Custom API base URL")
-def serve(host: str, port: int, provider: str, model: str | None, base_url: str | None) -> None:
+def serve(
+    host: str, port: int, provider: str, model: str | None, base_url: str | None
+) -> None:
     """Start the agent server: API + scheduler + headed browser.
 
     This is the main entry point for 24/7 operation.
@@ -723,6 +1053,7 @@ def serve(host: str, port: int, provider: str, model: str | None, base_url: str 
     init_state(provider=provider, model=model, base_url=base_url)
 
     from sediman.display import print_startup_banner, console
+
     print_startup_banner(provider, model, headless=False, mode="API server")
     console.print(f"  API:    http://{host}:{port}")
     console.print(f"  Docs:   http://{host}:{port}/docs")
@@ -734,14 +1065,24 @@ def serve(host: str, port: int, provider: str, model: str | None, base_url: str 
 
 
 async def _record_skill(
-    name: str, desc: str | None, model: str | None, provider: str, base_url: str | None, fps: int, max_duration: int,
+    name: str,
+    desc: str | None,
+    model: str | None,
+    provider: str,
+    base_url: str | None,
+    fps: int,
+    max_duration: int,
 ) -> None:
-    import time
 
     from sediman.agent.recording_manager import RecordingManager
     from sediman.agent.trace_to_skill import TraceToSkill
     from sediman.browser.session import BrowserSession
-    from sediman.display import print_startup_banner, print_success, print_error, console
+    from sediman.display import (
+        print_startup_banner,
+        print_success,
+        print_error,
+        console,
+    )
     from sediman.llm.provider import create_provider
     from sediman.skills.engine import SkillEngine
 
@@ -768,11 +1109,15 @@ async def _record_skill(
         )
 
         console.print("")
-        console.print(f"  [green]● Recording started[/green] — session [dim]{session.id}[/dim]")
+        console.print(
+            f"  [green]● Recording started[/green] — session [dim]{session.id}[/dim]"
+        )
         console.print(f"  [dim]FPS: {fps} | Max duration: {max_duration}s[/dim]")
         console.print("")
         console.print("  Perform your task in the browser window.")
-        console.print("  Press [bold]Ctrl+C[/bold] when done to stop recording and create the skill.")
+        console.print(
+            "  Press [bold]Ctrl+C[/bold] when done to stop recording and create the skill."
+        )
         console.print("")
 
         frame_count = 0
@@ -814,14 +1159,19 @@ async def _record_skill(
         engine = SkillEngine()
         existing = engine.read(skill_data["skill_name"])
         if existing:
-            engine.patch(skill_data["skill_name"], {
-                "description": skill_data["description"],
-                "steps": skill_data["steps"],
-                "when_to_use": skill_data.get("when_to_use"),
-                "pitfalls": skill_data.get("pitfalls", []),
-                "verification": skill_data.get("verification"),
-            })
-            console.print(f"  [yellow]Updated existing skill: {skill_data['skill_name']}[/yellow]")
+            engine.patch(
+                skill_data["skill_name"],
+                {
+                    "description": skill_data["description"],
+                    "steps": skill_data["steps"],
+                    "when_to_use": skill_data.get("when_to_use"),
+                    "pitfalls": skill_data.get("pitfalls", []),
+                    "verification": skill_data.get("verification"),
+                },
+            )
+            console.print(
+                f"  [yellow]Updated existing skill: {skill_data['skill_name']}[/yellow]"
+            )
         else:
             engine.create(
                 name=skill_data["skill_name"],
@@ -845,7 +1195,14 @@ async def _record_skill(
         await browser.stop()
 
 
-async def _run_task(task: str, model: str | None, provider: str, base_url: str | None, headless: bool, timeout: int | None = None) -> None:
+async def _run_task(
+    task: str,
+    model: str | None,
+    provider: str,
+    base_url: str | None,
+    headless: bool,
+    timeout: int | None = None,
+) -> None:
     import time
 
     from sediman.agent.loop import AgentLoop
@@ -857,6 +1214,7 @@ async def _run_task(task: str, model: str | None, provider: str, base_url: str |
     await ensure_db()
 
     from sediman.display import print_startup_banner
+
     print_startup_banner(provider, model, headless)
 
     llm = create_provider(provider, model, base_url)
@@ -866,8 +1224,13 @@ async def _run_task(task: str, model: str | None, provider: str, base_url: str |
 
     def on_step(event) -> None:
         from sediman.agent.loop import StepEvent
+
         if isinstance(event, StepEvent):
-            progress.update(phase=event.phase or "executing", action=event.action, url=event.observation)
+            progress.update(
+                phase=event.phase or "executing",
+                action=event.action,
+                url=event.observation,
+            )
 
     try:
         progress.start(task)
@@ -890,13 +1253,23 @@ async def _run_task(task: str, model: str | None, provider: str, base_url: str |
         progress.stop()
 
         success = result.result and "Task could not be completed" not in result.result
-        print_result_panel(result.result or "No result returned.", elapsed=elapsed, success=success)
-        print_badges(skill_created=result.skill_created, scheduled_job_id=result.scheduled_job_id, schedule_cron=result.schedule_cron)
+        print_result_panel(
+            result.result or "No result returned.", elapsed=elapsed, success=success
+        )
+        print_badges(
+            skill_created=result.skill_created,
+            scheduled_job_id=result.scheduled_job_id,
+            schedule_cron=result.schedule_cron,
+        )
 
     except asyncio.TimeoutError:
         progress.stop()
         from sediman.display import print_error
-        print_error(f"Task timed out after {timeout}s.", "Try a simpler task or increase --timeout.")
+
+        print_error(
+            f"Task timed out after {timeout}s.",
+            "Try a simpler task or increase --timeout.",
+        )
     except Exception:
         progress.stop()
         raise
@@ -905,7 +1278,11 @@ async def _run_task(task: str, model: str | None, provider: str, base_url: str |
 
 
 async def _run_skill(
-    skill_data: dict, model: str | None, provider: str, base_url: str | None, headless: bool
+    skill_data: dict,
+    model: str | None,
+    provider: str,
+    base_url: str | None,
+    headless: bool,
 ) -> None:
     import time
 
@@ -927,15 +1304,23 @@ async def _run_skill(
         progress.update(phase="starting", action="Starting browser...")
         await browser.start()
 
-        progress.update(phase="executing", action=f"Executing skill: {skill_data['name']}...")
+        progress.update(
+            phase="executing", action=f"Executing skill: {skill_data['name']}..."
+        )
         start = time.monotonic()
         result = await execute_skill(skill_data, browser, llm)
         elapsed = time.monotonic() - start
 
         progress.stop()
 
-        success = bool(result and not result.startswith("Skill") and "failed" not in result.lower())
-        print_result_panel(result or "Skill completed with no output.", elapsed=elapsed, success=success)
+        success = bool(
+            result and not result.startswith("Skill") and "failed" not in result.lower()
+        )
+        print_result_panel(
+            result or "Skill completed with no output.",
+            elapsed=elapsed,
+            success=success,
+        )
 
     except Exception:
         progress.stop()
@@ -953,12 +1338,20 @@ async def _show_sessions() -> None:
 
     if not recent:
         from sediman.display import console
+
         console.print("  No sessions yet.")
         return
 
     from rich.table import Table
     from sediman.display import console
-    table = Table(title="Recent Sessions", show_header=True, header_style="cyan", box=None, padding=(0, 2))
+
+    table = Table(
+        title="Recent Sessions",
+        show_header=True,
+        header_style="cyan",
+        box=None,
+        padding=(0, 2),
+    )
     table.add_column("ID", style="dim")
     table.add_column("Task")
     table.add_column("Time", style="dim")

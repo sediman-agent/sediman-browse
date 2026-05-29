@@ -107,7 +107,10 @@ class BrowserSession:
                     for entry in origin.get("localStorage", []):
                         await session.browser_context.evaluate(
                             "localStorage.setItem(key, value)",
-                            arg={"key": entry.get("name", ""), "value": entry.get("value", "")},
+                            arg={
+                                "key": entry.get("name", ""),
+                                "value": entry.get("value", ""),
+                            },
                         )
             logger.info("session_state_loaded", name=name, cookies=len(cookies))
             return True
@@ -167,6 +170,7 @@ async def run_browser_task(
 
     step_callback = None
     if on_step:
+
         def step_callback(browser_state: Any, agent_output: Any, step_num: int) -> None:
             url = ""
             try:
@@ -174,18 +178,47 @@ async def run_browser_task(
             except Exception:
                 pass
             action_name = ""
+            action_detail = ""
             try:
                 if hasattr(agent_output, "action"):
                     action_obj = agent_output.action
                     if hasattr(action_obj, "name"):
                         action_name = action_obj.name
                     else:
-                        action_name = type(action_obj).__name__.replace("Action", "").replace("AgentOutputAction", "done")
+                        action_name = (
+                            type(action_obj)
+                            .__name__.replace("Action", "")
+                            .replace("AgentOutputAction", "done")
+                        )
+                    if hasattr(action_obj, "index"):
+                        action_detail = f"element {action_obj.index}"
+                    if hasattr(action_obj, "text"):
+                        t = action_obj.text or ""
+                        if t:
+                            action_detail = f"{action_detail}: {t[:80]}" if action_detail else t[:80]
+                    if hasattr(action_obj, "url"):
+                        u = action_obj.url or ""
+                        if u:
+                            action_detail = f"navigate to {u[:100]}"
                 elif isinstance(agent_output, dict):
-                    action_name = agent_output.get("action", agent_output.get("type", ""))
+                    action_name = agent_output.get(
+                        "action", agent_output.get("type", "")
+                    )
+                    args = agent_output.get("arguments", agent_output)
+                    if isinstance(args, dict):
+                        u = args.get("url", "")
+                        if u:
+                            action_detail = f"navigate to {u[:100]}"
+                        t = args.get("text", "")
+                        if t:
+                            action_detail = f"type '{t[:50]}'"
+                        sel = args.get("selector", "")
+                        if sel:
+                            action_detail = f"{action_detail} in {sel[:50]}" if action_detail else f"click {sel[:50]}"
             except Exception:
                 action_name = f"step {step_num}"
-            on_step(action_name, url)
+            detail = action_detail if action_detail else url
+            on_step(action_name, detail)
 
     agent_kwargs: dict[str, Any] = {
         "task": task,
@@ -221,7 +254,7 @@ async def run_browser_task(
 
 def _extract_actions(raw_result: Any) -> list[dict[str, Any]]:
     actions = []
-    if hasattr(raw_result, "all_model_outputs"):
+    if hasattr(raw_result, "all_model_outputs") and raw_result.all_model_outputs is not None:
         for output in raw_result.all_model_outputs:
             if isinstance(output, dict):
                 actions.append(output)

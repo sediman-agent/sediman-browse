@@ -50,6 +50,9 @@ class LLMProvider(ABC):
         """Return a LangChain-compatible LLM for BrowserUse's Agent."""
         raise NotImplementedError
 
+    def get_planning_provider(self) -> LLMProvider:
+        return self
+
 
 class OpenAICompatibleProvider(LLMProvider):
     """Works with OpenAI, Ollama, and any OpenAI-compatible API."""
@@ -79,15 +82,12 @@ class OpenAICompatibleProvider(LLMProvider):
             api_key=self.api_key,
             base_url=base_url,
         )
+        self._cached_browser_llm: Any | None = None
 
     def get_browser_use_llm(self) -> Any:
-        """Return an LLM compatible with BrowserUse's Agent.
+        if self._cached_browser_llm is not None:
+            return self._cached_browser_llm
 
-        Uses BrowserUse's own ChatOpenAI wrapper, which handles structured
-        output via response_format. For models that don't support strict
-        json_schema (like MiniMax, Ollama, etc.), we monkey-patch the
-        ainvoke method to use prompt-based JSON instead.
-        """
         from browser_use.llm.openai.chat import ChatOpenAI as _BUChatOpenAI
 
         llm = _BUChatOpenAI(
@@ -180,7 +180,18 @@ class OpenAICompatibleProvider(LLMProvider):
             )
 
         llm.ainvoke = patched_ainvoke
+        self._cached_browser_llm = llm
         return llm
+
+    def get_planning_provider(self) -> OpenAICompatibleProvider:
+        planning_model = PLANNING_MODEL_MAP.get(self.model, self.model)
+        if planning_model == self.model:
+            return self
+        return OpenAICompatibleProvider(
+            model=planning_model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
 
     async def chat(
         self,
@@ -260,6 +271,13 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": "http://localhost:11434/v1",
         "api_key_env": None,
     },
+}
+
+PLANNING_MODEL_MAP: dict[str, str] = {
+    "gpt-4o": "gpt-4o-mini",
+    "gpt-4o-mini": "gpt-4o-mini",
+    "claude-3.5-sonnet": "claude-3-haiku",
+    "claude-3-sonnet": "claude-3-haiku",
 }
 
 

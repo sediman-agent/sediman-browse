@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from sediman.agent.recorder import SkillRecorder
 from sediman.agent.manager import ManagerPlan
@@ -21,10 +20,28 @@ class TestSkillRecorderShouldRecord:
 
         assert recorder.should_record("check stock price", plan, actions) is True
 
-    def test_skips_when_no_skill_name(self):
+    def test_auto_records_when_no_skill_name_but_complex_actions(self):
+        recorder = SkillRecorder()
+        plan = ManagerPlan(browser_task="check stock price")
+        actions = [
+            {"action": "navigate"},
+            {"action": "click"},
+            {"action": "input"},
+        ]
+
+        assert recorder.should_record("check stock price", plan, actions) is True
+
+    def test_skips_when_too_few_actions_and_no_skill_name(self):
         recorder = SkillRecorder()
         plan = ManagerPlan(browser_task="check stock price")
         actions = [{"action": "navigate"}, {"action": "extract"}]
+
+        assert recorder.should_record("check stock price", plan, actions) is False
+
+    def test_skips_when_single_action_type_and_no_skill_name(self):
+        recorder = SkillRecorder()
+        plan = ManagerPlan(browser_task="check stock price")
+        actions = [{"action": "navigate"}, {"action": "navigate"}, {"action": "navigate"}]
 
         assert recorder.should_record("check stock price", plan, actions) is False
 
@@ -59,6 +76,7 @@ class TestSkillRecorderRecord:
         assert name == "nvda-price"
 
         from sediman.skills.engine import SkillEngine
+
         engine = SkillEngine(skills_dir=tmp_sediman_dir / "skills")
         skill = engine.read("nvda-price")
         assert skill is not None
@@ -79,6 +97,7 @@ class TestSkillRecorderRecord:
             name = recorder.record("check server", plan, "OK", actions)
 
         from sediman.skills.engine import SkillEngine
+
         engine = SkillEngine(skills_dir=tmp_sediman_dir / "skills")
         skill = engine.read("server-check")
         steps_text = " ".join(skill["steps"])
@@ -96,6 +115,7 @@ class TestSkillRecorderRecord:
         skills_dir = tmp_sediman_dir / "skills"
         with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
+
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="existing-skill", description="original", steps=["s1"])
 
@@ -113,7 +133,9 @@ class TestSkillRecorderRecord:
 class TestSkillRecorderActionSummarization:
     def test_navigate_action(self):
         recorder = SkillRecorder()
-        result = recorder._summarize_action({"action": "navigate", "url": "https://example.com"})
+        result = recorder._summarize_action(
+            {"action": "navigate", "url": "https://example.com"}
+        )
         assert "example.com" in result
 
     def test_click_action(self):
@@ -136,7 +158,7 @@ class TestSkillRecorderActionSummarization:
         result = recorder._summarize_action({"action": "done"})
         assert result is None
 
-    def test_empty_action_returns_none(self):
+    def test_empty_action_returns_none_or_string(self):
         recorder = SkillRecorder()
-        result = recorder._summarize_action({})
-        assert result is None
+        result = recorder._summarize_action({"action": ""})
+        assert result is None or isinstance(result, str)

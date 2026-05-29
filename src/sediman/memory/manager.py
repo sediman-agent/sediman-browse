@@ -1,4 +1,5 @@
 """MemoryManager — orchestrator for builtin + optional external memory providers."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -87,7 +88,9 @@ class MemoryManager:
 
         lines = [result.message]
         if result.usage:
-            lines.append(f"  {target.upper()} usage: {result.usage.formatted}, {len(result.usage.entries)} entries")
+            lines.append(
+                f"  {target.upper()} usage: {result.usage.formatted}, {len(result.usage.entries)} entries"
+            )
             for i, entry in enumerate(result.usage.entries, 1):
                 preview = entry[:80] + ("..." if len(entry) > 80 else "")
                 lines.append(f"  {i}. {preview}")
@@ -99,10 +102,7 @@ class MemoryManager:
         self._turn_count += 1
 
     def should_review(self) -> bool:
-        return (
-            self._turn_count > 0
-            and self._turn_count % self._review_interval == 0
-        )
+        return self._turn_count > 0 and self._turn_count % self._review_interval == 0
 
     async def run_background_review(self, conversation: list[dict[str, str]]) -> None:
         if not self._llm:
@@ -132,8 +132,7 @@ class MemoryManager:
             {
                 "role": "user",
                 "content": (
-                    f"Conversation:\n{conv_text}\n\n"
-                    f"Memory usage: {usage.formatted}"
+                    f"Conversation:\n{conv_text}\n\nMemory usage: {usage.formatted}"
                 ),
             },
         ]
@@ -183,7 +182,9 @@ class MemoryManager:
 
     def register_external(self, provider: MemoryProvider) -> None:
         if self._external:
-            logger.warning("external_provider_already_set", current=self._external.name())
+            logger.warning(
+                "external_provider_already_set", current=self._external.name()
+            )
             return
         self._external = provider
 

@@ -113,7 +113,7 @@ class TestTraceToSkillConvert:
 
         await converter.convert(session)
 
-        call_args = mock_llm.chat.call_args
+        call_args = mock_llm.chat.call_args_list[0]
         messages = call_args.kwargs.get("messages") or call_args[0][0]
         user_msg = messages[1]
         content = user_msg["content"]
@@ -176,7 +176,7 @@ class TestTraceToSkillConvert:
 
         await converter.convert(session)
 
-        call_args = mock_llm.chat.call_args
+        call_args = mock_llm.chat.call_args_list[0]
         messages = call_args.kwargs.get("messages") or call_args[0][0]
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
@@ -199,7 +199,7 @@ class TestTraceToSkillConvert:
 
         await converter.convert(session, max_frames=5)
 
-        call_args = mock_llm.chat.call_args
+        call_args = mock_llm.chat.call_args_list[0]
         messages = call_args.kwargs.get("messages") or call_args[0][0]
         user_content = messages[1]["content"]
         image_parts = [p for p in user_content if p["type"] == "image_url"]
@@ -215,7 +215,7 @@ class TestTraceToSkillConvert:
 
         await converter.convert(session)
 
-        call_args = mock_llm.chat.call_args
+        call_args = mock_llm.chat.call_args_list[0]
         tools = call_args.kwargs.get("tools")
         assert tools == []
 

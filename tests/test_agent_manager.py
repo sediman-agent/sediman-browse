@@ -88,7 +88,10 @@ class TestManagerAgentLLMPlanning:
         ))
         manager = ManagerAgent(llm)
 
-        plan = await manager.plan("I need a 2BR apartment under $2000, search for me")
+        conversation = [
+            {"role": "user", "content": "I'm moving to a new city"},
+        ]
+        plan = await manager.plan("I need a 2BR apartment under $2000, search for me", conversation)
 
         assert plan.memory == "User is looking for 2BR apartments under $2000"
 

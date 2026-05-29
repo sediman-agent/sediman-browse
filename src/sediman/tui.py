@@ -1323,7 +1323,7 @@ class SedimanTUI:
             return
 
         if manager.is_recording():
-            _cprint(f"  \033[31mAnother recording is active. Use \033[36m/stop\033[0m\033[31m first.\033[0m")
+            _cprint("  \033[31mAnother recording is active. Use \033[36m/stop\033[0m\033[31m first.\033[0m")
             return
 
         browser = await self._get_browser()
@@ -1337,7 +1337,7 @@ class SedimanTUI:
                 max_duration=300,
             )
             _cprint(f"  \033[32m● Recording started: {name}\033[0m (session {session.id})")
-            _cprint(f"  \033[2mPerform your task in the browser. Use \033[36m/stop\033[0m\033[2m when done.\033[0m")
+            _cprint("  \033[2mPerform your task in the browser. Use \033[36m/stop\033[0m\033[2m when done.\033[0m")
         except Exception as e:
             _cprint(f"  \033[31mX Failed to start recording: {e}\033[0m")
 

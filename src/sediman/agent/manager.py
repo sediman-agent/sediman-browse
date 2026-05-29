@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,7 @@ class ManagerAgent:
         task: str,
         conversation: list[dict[str, str]] | None = None,
         previous_failure: str | None = None,
+        on_streaming_token: Callable[[str], None] | None = None,
     ) -> ManagerPlan:
         regex_plan = self._regex_planner.plan(task)
 
@@ -45,8 +47,16 @@ class ManagerAgent:
                 schedule=regex_plan.schedule,
             )
 
+        if self._is_simple_browser_task(task) and not conversation and not previous_failure:
+            return ManagerPlan(browser_task=task)
+
         try:
-            manager_plan = await self._llm_plan(task, conversation, previous_failure)
+            if on_streaming_token:
+                manager_plan = await self._llm_plan_stream(
+                    task, conversation, previous_failure, on_streaming_token
+                )
+            else:
+                manager_plan = await self._llm_plan(task, conversation, previous_failure)
             if manager_plan:
                 if regex_plan.schedule and not manager_plan.schedule:
                     manager_plan.schedule = regex_plan.schedule
@@ -150,6 +160,137 @@ class ManagerAgent:
             "reasoning": "Defaulting to complete due to reflection failure.",
             "issues": [],
         }
+
+    async def _llm_plan_stream(
+        self,
+        task: str,
+        conversation: list[dict[str, str]] | None,
+        previous_failure: str | None,
+        on_token: Callable[[str], None],
+    ) -> ManagerPlan | None:
+        """Streaming version of _llm_plan — yields reasoning tokens as they arrive."""
+        from sediman.agent.prompts.builder import _load_template
+
+        system_prompt = _load_template("manager_system.md")
+
+        if conversation:
+            from sediman.utils import format_conversation_context
+            context = format_conversation_context(conversation, limit=10)
+            system_prompt += (
+                "\n\n<conversation_history>\n"
+                "The user has had previous interactions. Use this context to "
+                "understand follow-up messages, corrections, and references "
+                "to earlier tasks.\n\n"
+                f"{context}\n"
+                "</conversation_history>"
+            )
+
+        if previous_failure:
+            system_prompt += (
+                f"\n\n<previous_failure>\n"
+                f"The previous attempt failed with this error:\n{previous_failure}\n"
+                f"Adjust the plan to avoid the same failure.\n"
+                f"</previous_failure>"
+            )
+
+        episodic = self._get_episodic_context(task)
+        if episodic:
+            system_prompt += (
+                f"\n\n<episodic_memory>\n"
+                f"Relevant past experiences:\n{episodic}\n"
+                f"</episodic_memory>"
+            )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": task},
+        ]
+
+        # Collect streaming response
+        chunks: list[str] = []
+        try:
+            async for token in self.llm.chat_stream(messages=messages, tools=[]):
+                if token:
+                    chunks.append(token)
+                    on_token(token)
+        except Exception as e:
+            logger.debug("plan_stream_failed", error=str(e))
+            return None
+
+        text = "".join(chunks)
+        if not text.strip():
+            return None
+
+        text = self._extract_json(text)
+        if not text:
+            return None
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            logger.debug("manager_plan_json_parse_failed", text=text[:200])
+            return None
+
+        return self._parse_plan_data(data)
+
+    def _parse_plan_data(self, data: dict[str, Any]) -> ManagerPlan | None:
+        """Parse the JSON dict into a ManagerPlan."""
+        browser_task = data.get("browser_task", "")
+
+        strategy = Strategy.DIRECT
+        strat_str = data.get("strategy", "direct")
+        try:
+            strategy = Strategy(strat_str)
+        except ValueError:
+            pass
+
+        response_text = data.get("response")
+
+        if strategy == Strategy.CONVERSATIONAL:
+            return ManagerPlan(
+                browser_task="",
+                strategy=Strategy.CONVERSATIONAL,
+                response=response_text or "I'm Sediman, your browser automation agent. How can I help you?",
+            )
+
+        subtasks = data.get("subtasks")
+        if subtasks and not isinstance(subtasks, list):
+            subtasks = None
+
+        skill_to_use = data.get("skill_to_use")
+        if skill_to_use and strategy == Strategy.USE_SKILL:
+            browser_task = f"Execute skill '{skill_to_use}' for: {browser_task}"
+
+        schedule = None
+        sched_data = data.get("schedule")
+        if sched_data and isinstance(sched_data, dict):
+            from sediman.scheduler.cron import validate_cron_expr
+            cron = sched_data.get("cron", "")
+            if validate_cron_expr(cron):
+                schedule = ScheduleIntent(
+                    cron=cron,
+                    task=sched_data.get("task", browser_task or data.get("task", "")),
+                )
+
+        if not browser_task and schedule:
+            return ManagerPlan(
+                browser_task="",
+                schedule=schedule,
+            )
+
+        if not browser_task:
+            browser_task = data.get("task", "")
+
+        return ManagerPlan(
+            browser_task=browser_task,
+            schedule=schedule,
+            memory=data.get("memory"),
+            skill_name=data.get("skill_name"),
+            skill_description=data.get("skill_description"),
+            strategy=strategy,
+            subtasks=subtasks,
+            skill_to_use=skill_to_use,
+        )
 
     async def _llm_plan(
         self,
@@ -325,6 +466,23 @@ class ManagerAgent:
         except Exception:
             pass
         return None
+
+    def _is_simple_browser_task(self, task: str) -> bool:
+        if len(task) >= 200:
+            return False
+        task_lower = task.lower()
+        if any(kw in task_lower for kw in ("chat", "converse", "discuss")):
+            return False
+        if any(kw in task_lower for kw in ("schedule", "cron", "remind", "recurring", "interval", "periodically")):
+            return False
+        # Vague/ambiguous tasks need LLM interpretation
+        if any(kw in task_lower for kw in ("sorry", "actually", "wait", "never mind", "no i meant", "i meant")):
+            return False
+        # Must contain a clear action verb for fast-path
+        action_verbs = ("go to", "open", "visit", "browse", "navigate", "search", "find", "check", "get", "buy", "book", "fill", "download", "upload", "log in", "sign in", "click", "scrape", "monitor", "track", "watch", "extract", "take screenshot")
+        if not any(kw in task_lower for kw in action_verbs):
+            return False
+        return True
 
     def _get_schedule_context(self, task: str) -> str | None:
         try:

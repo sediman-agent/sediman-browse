@@ -1,0 +1,31 @@
+# Example docker-compose configuration for Sediman
+#
+# 1. Copy this file:  cp docker-compose.example.yml docker-compose.override.yml
+# 2. Create .env:     echo 'OPENAI_API_KEY=sk-...' > .env
+# 3. Run:             docker compose up -d
+#
+# Customization options below are commented out — uncomment what you need.
+
+services:
+  sediman:
+    build:
+      context: .
+      # dockerfile: Dockerfile        # custom Dockerfile path
+      # args:
+      #   - EXTRA_PIP=your-package    # build-time pip extras
+    ports:
+      - "8080:8080"
+      # - "8081:8080"                 # alternative host port
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - OPENAI_MODEL=gpt-4o        # model override
+      # - SEDIMAN_LOG_LEVEL=debug     # log verbosity
+    volumes:
+      - ~/.sediman:/root/.sediman     # skills, memory, cron jobs
+      # - ./config.yaml:/app/config.yaml  # custom config
+    restart: unless-stopped
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2g
+    #       cpus: "2.0"

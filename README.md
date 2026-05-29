@@ -142,14 +142,6 @@ Key subsystems:
 [Business Source License 1.1 (BSL)](LICENSE).
 ---
 
-## Built With
-
-- [Browser Use](https://github.com/browser-use/browser-use) 
-- [Chromium](https://www.chromium.org/) 
-- [OpenAI](https://openai.com/) / [Ollama](https://ollama.com/) 
-
----
-
 <div align="center">
 
 **If this project helps you, consider giving it a star.**

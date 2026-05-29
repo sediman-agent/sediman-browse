@@ -1,0 +1,23 @@
+[package]
+name = "sediman-tui-core"
+description = "Reusable TUI framework — widgets, input, layout, command system, styling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+comrak.workspace = true
+syntect.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+arboard.workspace = true
+clap.workspace = true
