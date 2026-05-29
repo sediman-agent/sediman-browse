@@ -168,18 +168,40 @@ flowchart TB
 
 ```bash
 # Install
-git clone https://github.com/sediman/sediman-browse.git
+git clone https://github.com/sediman-agent/sediman-browse.git
 cd sediman-browse && uv sync
 
-# Set your API key
-export OPENAI_API_KEY=sk-...
+# Option 1: TUI (recommended — Rust terminal UI)
+MINIMAX_API_KEY=sk-... bun run tui --provider minimax --model MiniMax-M2.7
 
-# Run a task
-uv run sediman run "check Apple stock price on Yahoo Finance"
+# Option 2: TUI with OpenAI
+OPENAI_API_KEY=sk-... bun run tui --provider openai --model gpt-4o
 
-# Or start interactive mode
-uv run sediman chat
+# Option 3: TUI with custom provider/base URL
+OPENAI_API_KEY=sk-... bun run tui --provider openai --model MyModel --base-url https://my-api.example.com/v1
+
+# Option 4: CLI (headless, one-shot)
+MINIMAX_API_KEY=sk-... uv run sediman run "check Apple stock price on Yahoo Finance"
+
+# Option 5: Chat (interactive Python CLI)
+MINIMAX_API_KEY=sk-... uv run sediman chat --provider minimax --model MiniMax-M2.7
 ```
+
+### TUI Commands
+
+| Command | Description |
+|---------|-------------|
+| `/provider` | Select LLM provider (openai, ollama, or custom URL) |
+| `/model` | Search, add, or switch AI models |
+| `/memory` | View and edit agent memory |
+| `/soul` | View and edit agent personality |
+| `/skills` | List learned skills |
+| `/browser headed` | Switch to visible browser mode |
+| `/schedule` | List scheduled jobs |
+| `/help` | Show all commands |
+| `Ctrl+/` | Toggle help overlay |
+| `Ctrl+Enter` | Insert newline in input |
+| `Esc` | Cancel running agent |
 
 ---
 
