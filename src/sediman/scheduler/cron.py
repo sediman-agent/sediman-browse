@@ -49,6 +49,12 @@ class CronManager:
         model: str | None = None,
         base_url: str | None = None,
     ) -> str:
+        if not validate_cron_expr(cron_expr):
+            raise ValueError(
+                f'Invalid cron expression "{cron_expr}". '
+                'Must be 5 fields: minute hour day month day_of_week '
+                '(e.g., "0 9 * * *")'
+            )
         job_id = uuid.uuid4().hex[:12]
         job = {
             "id": job_id,

@@ -1128,13 +1128,17 @@ class SedimanTUI:
         from sediman.scheduler.cron import CronManager
 
         cron = CronManager()
-        job_id = cron.add_job(
-            cron_expr=parts[0],
-            task=parts[1],
-            provider=self.provider,
-            model=self.model,
-            base_url=self.base_url,
-        )
+        try:
+            job_id = cron.add_job(
+                cron_expr=parts[0],
+                task=parts[1],
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+            )
+        except ValueError as e:
+            _cprint(f"  \033[31m{e}\033[0m")
+            return
         _cprint(
             f"  \033[32m+ Scheduled: [{job_id[:8]}] {parts[0]} -> {parts[1]}\033[0m"
         )

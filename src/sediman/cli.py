@@ -560,14 +560,19 @@ def schedule_add(cron_expr: str, task: str | None, skill: str | None, provider: 
     from sediman.scheduler.cron import CronManager
 
     cron = CronManager()
-    job_id = cron.add_job(
-        cron_expr=cron_expr,
-        task=task or f"Run skill: {skill}",
-        skill_name=skill,
-        provider=provider,
-        model=model,
-        base_url=base_url,
-    )
+    try:
+        job_id = cron.add_job(
+            cron_expr=cron_expr,
+            task=task or f"Run skill: {skill}",
+            skill_name=skill,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+        )
+    except ValueError as e:
+        from sediman.display import print_error
+        print_error(str(e))
+        sys.exit(1)
     from sediman.display import print_success
     print_success("Scheduled", f"Job [{job_id[:8]}] {cron_expr} → {task or skill}")
 
