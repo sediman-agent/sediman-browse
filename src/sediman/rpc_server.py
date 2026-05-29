@@ -62,6 +62,8 @@ from sediman.llm.provider import create_provider, LLMProvider, PROVIDERS
 
 logger = structlog.get_logger()
 
+# Global cron scheduler — started in serve(), used by schedule.add/remove for hot-reload
+_cron_scheduler: Any = None
 SOCKET = os.environ.get("SEDIMAN_PYTHON_SOCKET", "/tmp/sediman-python.sock")
 MAX_TASK_LENGTH = 10000
 
@@ -703,6 +705,11 @@ async def handle_schedule_add(params: dict[str, Any], notify: NotifyFn | None = 
         skill_name=skill if skill else None,
         enabled=True,
     )
+
+    # Hot-reload scheduler so the new job starts immediately
+    if _cron_scheduler is not None:
+        _cron_scheduler.reload()
+
     return {"job_id": job_id}
 
 
@@ -713,6 +720,11 @@ async def handle_schedule_remove(params: dict[str, Any], notify: NotifyFn | None
     if not job_id:
         raise ValueError("job_id is required")
     mgr.remove_job(job_id)
+
+    # Hot-reload scheduler so the removed job stops
+    if _cron_scheduler is not None:
+        _cron_scheduler.reload()
+
     return {"removed": job_id}
 
 
@@ -950,15 +962,27 @@ async def handle_connection(
 # ── Server ─────────────────────────────────────────────────────────
 
 async def serve() -> None:
-    """Start the Unix socket JSON-RPC server."""
+    """Start the Unix socket JSON-RPC server with cron scheduler."""
+    global _cron_scheduler
+
     if os.path.exists(SOCKET):
         os.unlink(SOCKET)
+
+    # Start the cron scheduler alongside the RPC server
+    from sediman.scheduler.cron import CronScheduler
+    _cron_scheduler = CronScheduler()
+    _cron_scheduler.start()
+    logger.info("cron_scheduler_started")
 
     server = await asyncio.start_unix_server(handle_connection, path=SOCKET)
     logger.info("rpc_server_started", socket=SOCKET)
 
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        _cron_scheduler.stop()
+        _cron_scheduler = None
 
 
 def main() -> None:
