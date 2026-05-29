@@ -339,6 +339,7 @@ async def _handle_terminal(
                 data={"command": command, "denied": True},
             )
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -363,16 +364,30 @@ async def _handle_terminal(
             data={"command": command, "exit_code": proc.returncode},
         )
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        if proc is not None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
         return ToolResult(
             success=False,
             output=f"Command timed out after {timeout}s: {command[:100]}",
             data={"command": command, "timed_out": True},
         )
     except Exception as e:
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
         return ToolResult(success=False, output=f"Command failed: {e}")
 
 
@@ -659,27 +674,36 @@ async def _handle_search_files(
 ) -> ToolResult:
     if not query:
         return ToolResult(success=False, output="query is required.")
+    import subprocess
+    from pathlib import Path
+    base = Path(path or ".").expanduser().resolve()
+    if not base.exists():
+        return ToolResult(success=False, output=f"Directory not found: {base}")
+    cmd = ["rg", "--no-heading", "-n", "--max-count", "50"]
+    if file_pattern:
+        cmd.extend(["--glob", file_pattern])
+    cmd.append(query)
+    cmd.append(str(base))
+    proc = None
     try:
-        import subprocess
-        from pathlib import Path
-        base = Path(path or ".").expanduser().resolve()
-        if not base.exists():
-            return ToolResult(success=False, output=f"Directory not found: {base}")
-        cmd = ["rg", "--no-heading", "-n", "--max-count", "50"]
-        if file_pattern:
-            cmd.extend(["--glob", file_pattern])
-        cmd.append(query)
-        cmd.append(str(base))
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return ToolResult(success=False, output="Search timed out after 15 seconds.")
         if proc.returncode == 2:
-            return ToolResult(success=False, output=f"Search error: {proc.stderr[:500]}")
-        if proc.returncode == 1 or not proc.stdout.strip():
+            return ToolResult(success=False, output=f"Search error: {stderr[:500]}")
+        if proc.returncode == 1 or not stdout.strip():
             return ToolResult(
                 success=True,
                 output=f"No matches found for '{query}' in {base}",
                 data={"matches": [], "count": 0},
             )
-        output = proc.stdout.strip()
+        output = stdout.strip()
         if len(output) > 10000:
             output = output[:10000] + "\n... (truncated)"
         match_count = output.count("\n") + 1
@@ -693,10 +717,16 @@ async def _handle_search_files(
             success=False,
             output="ripgrep (rg) is not installed. Install it or use terminal with grep.",
         )
-    except subprocess.TimeoutExpired:
-        return ToolResult(success=False, output="Search timed out after 15 seconds.")
     except Exception as e:
         return ToolResult(success=False, output=f"Failed to search files: {e}")
+    finally:
+        if proc is not None:
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
 
 def create_agent_tool_registry() -> ToolRegistry:

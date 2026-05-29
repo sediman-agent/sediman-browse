@@ -216,6 +216,9 @@ class _MockProcess:
     async def communicate(self):
         return self._stdout, self._stderr
 
+    async def wait(self):
+        return self.returncode
+
     def kill(self):
         pass
 
