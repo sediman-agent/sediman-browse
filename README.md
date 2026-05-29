@@ -172,20 +172,7 @@ flowchart TB
 git clone https://github.com/sediman-agent/sediman-browse.git
 cd sediman-browse && uv sync
 
-# Option 1: TUI (recommended — Rust terminal UI)
-MINIMAX_API_KEY=sk-... bun run tui --provider minimax --model MiniMax-M2.7
-
-# Option 2: TUI with OpenAI
 OPENAI_API_KEY=sk-... bun run tui --provider openai --model gpt-4o
-
-# Option 3: TUI with custom provider/base URL
-OPENAI_API_KEY=sk-... bun run tui --provider openai --model MyModel --base-url https://my-api.example.com/v1
-
-# Option 4: CLI (headless, one-shot)
-MINIMAX_API_KEY=sk-... uv run sediman run "check Apple stock price on Yahoo Finance"
-
-# Option 5: Chat (interactive Python CLI)
-MINIMAX_API_KEY=sk-... uv run sediman chat --provider minimax --model MiniMax-M2.7
 ```
 
 ### TUI Commands
