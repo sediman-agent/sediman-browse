@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import aiosqlite
 import structlog
 
 from sediman.store.db import get_connection as _get_conn

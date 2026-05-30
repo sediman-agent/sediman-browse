@@ -3,6 +3,7 @@
 Hermes-style architecture: MEMORY.md (agent notes) + USER.md (user profile).
 Entries separated by §. Snapshot frozen at session start to protect prefix cache.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,7 +12,6 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -102,7 +102,9 @@ class MemoryStore:
             for entry in mem_usage.entries:
                 parts.append(entry)
         else:
-            parts.append(f"MEMORY (your personal notes) [0/{MEMORY_LIMIT:,} chars — empty]")
+            parts.append(
+                f"MEMORY (your personal notes) [0/{MEMORY_LIMIT:,} chars — empty]"
+            )
 
         user_usage = self.get_usage("user")
         if user_usage.entries:
@@ -326,7 +328,9 @@ class MemoryStore:
         if MEMORY_DIR.exists():
             return
 
-        has_old = OLD_MEMORY_FILE.exists() or OLD_USER_FILE.exists() or OLD_MEMORY_DB.exists()
+        has_old = (
+            OLD_MEMORY_FILE.exists() or OLD_USER_FILE.exists() or OLD_MEMORY_DB.exists()
+        )
         if not has_old:
             MEMORY_DIR.mkdir(parents=True, exist_ok=True)
             return

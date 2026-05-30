@@ -55,6 +55,7 @@ def _scan_skill_content(name: str, description: str, steps: list[str]) -> list[s
     all_text = f"{name} {description} {' '.join(steps)}"
     try:
         from sediman.memory.security import scan_content
+
         return scan_content(all_text)
     except Exception:
         return []
@@ -70,12 +71,15 @@ async def _handle_skill_manage(
 ) -> ToolResult:
     try:
         from sediman.skills.engine import SkillEngine
+
         engine = SkillEngine()
 
         if action == "list":
             skills = engine.list_skills()
             if not skills:
-                return ToolResult(success=True, output="No skills found.", data={"skills": []})
+                return ToolResult(
+                    success=True, output="No skills found.", data={"skills": []}
+                )
             lines = [f"- {s['name']}: {s['description']}" for s in skills]
             return ToolResult(
                 success=True,
@@ -85,7 +89,9 @@ async def _handle_skill_manage(
 
         if action == "view":
             if not name:
-                return ToolResult(success=False, output="name is required for view action.")
+                return ToolResult(
+                    success=False, output="name is required for view action."
+                )
             skill = engine.read(name)
             if not skill:
                 return ToolResult(success=False, output=f"Skill '{name}' not found.")
@@ -132,7 +138,9 @@ async def _handle_skill_manage(
 
         if action == "patch":
             if not name:
-                return ToolResult(success=False, output="name is required for patch action.")
+                return ToolResult(
+                    success=False, output="name is required for patch action."
+                )
 
             updates: dict[str, Any] = {}
             if description:
@@ -151,6 +159,7 @@ async def _handle_skill_manage(
             all_text = f"{name} {description or ''} {' '.join(steps or [])}"
             try:
                 from sediman.memory.security import scan_content
+
                 threats = scan_content(all_text)
                 if threats:
                     return ToolResult(
@@ -175,7 +184,9 @@ async def _handle_skill_manage(
 
         if action == "delete":
             if not name:
-                return ToolResult(success=False, output="name is required for delete action.")
+                return ToolResult(
+                    success=False, output="name is required for delete action."
+                )
             deleted = engine.delete(name)
             if not deleted:
                 return ToolResult(success=False, output=f"Skill '{name}' not found.")
@@ -400,6 +411,7 @@ async def _handle_get_schedule_results(
 ) -> ToolResult:
     try:
         from sediman.scheduler.cron import CronManager
+
         cron = CronManager()
         results = cron.get_results(job_id=job_id, task_filter=task_filter, limit=limit)
         if not results:
@@ -420,16 +432,21 @@ async def _handle_get_schedule_results(
             data={"results": results, "count": len(results)},
         )
     except Exception as e:
-        return ToolResult(success=False, output=f"Failed to query schedule results: {e}")
+        return ToolResult(
+            success=False, output=f"Failed to query schedule results: {e}"
+        )
 
 
 async def _handle_list_schedules(**kwargs: Any) -> ToolResult:
     try:
         from sediman.scheduler.cron import CronManager
+
         cron = CronManager()
         jobs = cron.list_jobs()
         if not jobs:
-            return ToolResult(success=True, output="No scheduled tasks.", data={"jobs": []})
+            return ToolResult(
+                success=True, output="No scheduled tasks.", data={"jobs": []}
+            )
         lines = []
         for j in jobs:
             status = "enabled" if j.get("enabled", True) else "disabled"
@@ -456,13 +473,17 @@ async def _handle_read_file(
         return ToolResult(success=False, output="path is required.")
     try:
         from pathlib import Path
+
         p = Path(path).expanduser().resolve()
         if not p.exists():
             return ToolResult(success=False, output=f"File not found: {p}")
         if not p.is_file():
             return ToolResult(success=False, output=f"Not a file: {p}")
         if p.stat().st_size > 500_000:
-            return ToolResult(success=False, output=f"File too large ({p.stat().st_size} bytes). Use terminal with head/tail.")
+            return ToolResult(
+                success=False,
+                output=f"File too large ({p.stat().st_size} bytes). Use terminal with head/tail.",
+            )
         raw = p.read_text(errors="replace")
         lines = raw.splitlines()
         total_lines = len(lines)
@@ -470,7 +491,9 @@ async def _handle_read_file(
         end = start + (limit or total_lines)
         start = min(start, total_lines + 1)
         sliced = lines[start - 1 : end - 1]
-        numbered = [f"{i}: {line}" for i, line in zip(range(start, start + len(sliced)), sliced)]
+        numbered = [
+            f"{i}: {line}" for i, line in zip(range(start, start + len(sliced)), sliced)
+        ]
         content = "\n".join(numbered)
         if len(content) > 50000:
             content = content[:50000] + "\n... (truncated)"
@@ -493,7 +516,7 @@ async def _handle_list_files(
 ) -> ToolResult:
     try:
         from pathlib import Path
-        import glob as globmod
+
         base = Path(path or ".").expanduser().resolve()
         if not base.exists():
             return ToolResult(success=False, output=f"Directory not found: {base}")
@@ -571,6 +594,7 @@ async def _handle_write_file(
         return ToolResult(success=False, output="content is required.")
     try:
         from pathlib import Path
+
         p = Path(path).expanduser().resolve()
         existed = p.exists()
         if create_dirs:
@@ -600,6 +624,7 @@ async def _handle_patch(
         return ToolResult(success=False, output="old and new are both required.")
     try:
         from pathlib import Path
+
         p = Path(path).expanduser().resolve()
         if not p.exists():
             return ToolResult(success=False, output=f"File not found: {p}")
@@ -662,6 +687,7 @@ async def _handle_search_files(
     try:
         import subprocess
         from pathlib import Path
+
         base = Path(path or ".").expanduser().resolve()
         if not base.exists():
             return ToolResult(success=False, output=f"Directory not found: {base}")
@@ -672,7 +698,9 @@ async def _handle_search_files(
         cmd.append(str(base))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if proc.returncode == 2:
-            return ToolResult(success=False, output=f"Search error: {proc.stderr[:500]}")
+            return ToolResult(
+                success=False, output=f"Search error: {proc.stderr[:500]}"
+            )
         if proc.returncode == 1 or not proc.stdout.strip():
             return ToolResult(
                 success=True,

@@ -323,23 +323,30 @@ class AgentLoop:
     def _build_plan_steps(self, state: AgentState, plan: ManagerPlan) -> AgentState:
         if plan.strategy == Strategy.DELEGATE and plan.subtasks:
             for i, subtask in enumerate(plan.subtasks):
-                state.plan_steps.append(PlanStep(
-                    id=i,
-                    description=subtask,
-                    strategy=Strategy.DELEGATE,
-                ))
+                state.plan_steps.append(
+                    PlanStep(
+                        id=i,
+                        description=subtask,
+                        strategy=Strategy.DELEGATE,
+                        subagent_type=plan.use_subagent,
+                    )
+                )
         elif plan.strategy == Strategy.USE_SKILL:
-            state.plan_steps.append(PlanStep(
-                id=0,
-                description=f"Execute skill '{plan.skill_to_use}': {plan.browser_task}",
-                strategy=Strategy.USE_SKILL,
-            ))
+            state.plan_steps.append(
+                PlanStep(
+                    id=0,
+                    description=f"Execute skill '{plan.skill_to_use}': {plan.browser_task}",
+                    strategy=Strategy.USE_SKILL,
+                )
+            )
         else:
-            state.plan_steps.append(PlanStep(
-                id=0,
-                description=plan.browser_task,
-                strategy=Strategy.DIRECT,
-            ))
+            state.plan_steps.append(
+                PlanStep(
+                    id=0,
+                    description=plan.browser_task,
+                    strategy=Strategy.DIRECT,
+                )
+            )
         return state
 
     async def _execute_direct_step(
@@ -359,14 +366,32 @@ class AgentLoop:
 
     async def _execute_delegate_step(self, state: AgentState, step: PlanStep) -> None:
         try:
-            result = await delegate_parallel(
-                tasks=[step.description],
-                browser_session=self.browser,
-                llm_provider=self.llm,
-                max_concurrent=1,
-            )
-            step.result = result[0] if result else "No result from delegate"
-            state.delegate_results.extend(result)
+            if step.subagent_type:
+                factory = self._get_subagent_factory()
+                parent_context = {
+                    "task": state.task,
+                    "errors": [e for e in state.errors],
+                    "observations": [o.content[:200] for o in state.observations[-3:]],
+                }
+                result = await factory.spawn(
+                    agent_type=step.subagent_type,
+                    task=step.description,
+                    parent_context=parent_context,
+                )
+                step.result = result.summary
+                state.actions_taken.extend(result.actions_taken)
+                if result.artifacts:
+                    for art in result.artifacts:
+                        logger.info("subagent_artifact", kind=art.kind, name=art.name)
+            else:
+                result = await delegate_parallel(
+                    tasks=[step.description],
+                    browser_session=self.browser,
+                    llm_provider=self.llm,
+                    max_concurrent=1,
+                )
+                step.result = result[0] if result else "No result from delegate"
+                state.delegate_results.extend(result)
         except Exception as e:
             step.result = f"Delegation failed: {e}"
             logger.warning("delegate_step_failed", error=str(e))
@@ -381,6 +406,39 @@ class AgentLoop:
             detail="; ".join(s.description[:40] for s in steps),
         )
 
+        # If all steps have subagent_type, use factory parallel spawn
+        if all(s.subagent_type for s in steps):
+            factory = self._get_subagent_factory()
+            parent_context = {
+                "task": state.task,
+                "errors": [e for e in state.errors],
+                "observations": [o.content[:200] for o in state.observations[-3:]],
+            }
+            specs = [(s.subagent_type or "browser", s.description) for s in steps]
+            try:
+                results = await factory.spawn_parallel(
+                    specs=specs,
+                    parent_context=parent_context,
+                    max_concurrent=min(3, len(steps)),
+                )
+                for step, result in zip(steps, results):
+                    step.result = result.summary
+                    step.status = "completed" if result.success else "failed"
+                    state.actions_taken.extend(result.actions_taken)
+                self._emit(
+                    state,
+                    f"Parallel subagents complete: {len(results)} results",
+                    detail="; ".join(r.summary[:40] for r in results),
+                )
+            except Exception as e:
+                logger.warning("parallel_subagent_delegation_failed", error=str(e))
+                for step in steps:
+                    step.result = f"Subagent delegation failed: {e}"
+                    step.status = "failed"
+                    state.errors.append(f"Parallel subagent delegation failed: {str(e)[:80]}")
+            return
+
+        # Fallback to legacy delegate_parallel
         tasks = [s.description for s in steps]
         try:
             results = await delegate_parallel(
@@ -530,6 +588,25 @@ class AgentLoop:
         })
 
     async def _post_task(self, state: AgentState, plan: ManagerPlan, task: str) -> None:
+        # Save auto-created subagent if ManagerAgent designed one
+        if plan.create_subagent:
+            try:
+                from sediman.agent.subagents.template import AgentTemplate
+
+                subagent_template = AgentTemplate(
+                    name=plan.create_subagent.get("name", "auto-agent"),
+                    description=plan.create_subagent.get("description", ""),
+                    mode="subagent",
+                    model=plan.create_subagent.get("model"),
+                    permissions=plan.create_subagent.get("permissions", {}),
+                    system_prompt=plan.create_subagent.get("system_prompt", ""),
+                    max_iterations=int(plan.create_subagent.get("max_iterations", 5)),
+                )
+                self._subagent_registry.save(subagent_template)
+                state.result += f"\n\n[Created new subagent: {subagent_template.name}]"
+            except Exception as e:
+                logger.warning("auto_subagent_save_failed", error=str(e))
+
         await self._save_session(task, state.result, state.actions_taken)
 
         all_actions = state.actions_taken
