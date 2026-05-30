@@ -18,17 +18,30 @@ RESET='\033[0m'
 SEDIMAN_BIN_DIR="$HOME/.sediman/bin"
 SKIP_BROWSER=false
 FORCE=false
+FROM_SOURCE=false
+GIT_BRANCH="main"
+GITHUB_REPO="sediman-agent/sediman-agent"
 
 for arg in "$@"; do
     case "$arg" in
         --skip-browser) SKIP_BROWSER=true ;;
         --force) FORCE=true ;;
+        --from-source) FROM_SOURCE=true ;;
+        --branch)
+            GIT_BRANCH="$2"
+            shift
+            ;;
+        --branch=*)
+            GIT_BRANCH="${arg#*=}"
+            ;;
         --help|-h)
             echo "Usage: curl -fsSL https://get.sediman.ai | bash -s -- [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --skip-browser   Skip Playwright/CloakBrowser install"
             echo "  --force          Reinstall even if already installed"
+            echo "  --from-source    Install from local cloned repo (skip GitHub)"
+            echo "  --branch BRANCH  Install a specific branch (default: main)"
             echo "  --help           Show this help"
             exit 0
             ;;
@@ -107,10 +120,27 @@ install_sediman() {
         return 0
     fi
 
-    info "Installing sediman-browse via uv..."
-    uv tool install sediman-browse --force 2>/dev/null || {
-        error "Failed to install sediman-browse via uv tool install."
-        error "Try: uv tool install sediman-browse"
+    if [ "$FROM_SOURCE" = "true" ]; then
+        info "Installing sediman from local source..."
+        if [ ! -f "pyproject.toml" ]; then
+            error "pyproject.toml not found. Run this from the sediman source directory."
+            error "Or clone first: git clone https://github.com/${GITHUB_REPO}.git"
+            exit 1
+        fi
+        uv tool install --force .
+        return 0
+    fi
+
+    local install_source="git+https://github.com/${GITHUB_REPO}.git"
+    if [ "$GIT_BRANCH" != "main" ]; then
+        install_source="${install_source}@${GIT_BRANCH}"
+    fi
+
+    info "Installing sediman from GitHub ($install_source)..."
+    uv tool install "$install_source" --force 2>/dev/null || {
+        error "Failed to install sediman via GitHub."
+        error "Try manually: uv tool install $install_source"
+        error "Or install from source: clone the repo and run 'uv tool install --force .'"
         exit 1
     }
 
@@ -129,7 +159,6 @@ install_sediman() {
 download_tui_binary() {
     local platform="$1"
     local tui_bin="$SEDIMAN_BIN_DIR/sediman-tui"
-    local github_repo="sediman-agent/sediman-browse"
 
     if [ -x "$tui_bin" ] && [ "$FORCE" != "true" ]; then
         info "sediman-tui already installed at $tui_bin"
@@ -137,7 +166,7 @@ download_tui_binary() {
     fi
 
     local latest_tag
-    latest_tag="$(curl -fsSL "https://api.github.com/repos/${github_repo}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/' || true)"
+    latest_tag="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/' || true)"
 
     if [ -z "$latest_tag" ]; then
         warn "Could not determine latest release. Skipping TUI binary."
@@ -146,7 +175,7 @@ download_tui_binary() {
     fi
 
     local archive_name="sediman-${latest_tag}-${platform}.tar.gz"
-    local download_url="https://github.com/${github_repo}/releases/download/${latest_tag}/${archive_name}"
+    local download_url="https://github.com/${GITHUB_REPO}/releases/download/${latest_tag}/${archive_name}"
 
     info "Downloading sediman-tui ${latest_tag} for ${platform}..."
 
