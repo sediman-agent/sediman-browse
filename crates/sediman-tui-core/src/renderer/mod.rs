@@ -41,14 +41,14 @@ impl Span {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Line {
     pub spans: Vec<Span>,
 }
 
 impl Line {
     pub fn new() -> Self {
-        Self { spans: Vec::new() }
+        Self::default()
     }
 
     pub fn from_raw(text: impl Into<String>) -> Self {

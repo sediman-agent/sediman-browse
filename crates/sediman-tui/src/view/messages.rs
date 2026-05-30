@@ -18,6 +18,8 @@ const PHASES: &[PhaseInfo] = &[
     PhaseInfo { name: "done", color_fn: |a| a.theme.success, symbol: "\u{2713}" },
     PhaseInfo { name: "failed", color_fn: |a| a.theme.error, symbol: "\u{2717}" },
     PhaseInfo { name: "Interrupted", color_fn: |a| a.theme.warning, symbol: "\u{26a0}" },
+    PhaseInfo { name: "streaming", color_fn: |a| a.theme.info, symbol: "\u{25b6}" },
+    PhaseInfo { name: "responding", color_fn: |a| a.theme.info, symbol: "\u{25b6}" },
 ];
 
 pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
@@ -47,6 +49,40 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
             Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold())));
         lines.push((format!("    {}", last_step),
             Style::new().fg(app.theme.text_muted)));
+
+        // ── Live streaming text block ──
+        if !app.streaming_text.is_empty() {
+            lines.push((String::new(), Style::new()));
+
+            let label = match app.streaming_phase.as_str() {
+                "planning" => "\u{25c6} Thinking",
+                "responding" => "\u{25b6} Responding",
+                "executing" => "\u{25b8} Executing",
+                "result" => "\u{276f} Result",
+                _ => "\u{25b6} Streaming",
+            };
+            lines.push((format!("    {}", label),
+                Style::new().fg(app.theme.info).add_modifier(TextAttributes::bold())));
+
+            let preview = if app.streaming_text.len() > 800 {
+                let s = &app.streaming_text;
+                format!("{}...", &s[s.len().saturating_sub(800)..])
+            } else {
+                app.streaming_text.clone()
+            };
+            let cursor = "\u{2588}";
+            for (i, text_line) in preview.lines().enumerate() {
+                if i < 50 {
+                    if i == preview.lines().count().saturating_sub(1) {
+                        push_wrapped(&mut lines, &format!("    {}{}", text_line, cursor),
+                            Style::new().fg(app.theme.text), max_width);
+                    } else {
+                        push_wrapped(&mut lines, &format!("    {}", text_line),
+                            Style::new().fg(app.theme.text), max_width);
+                    }
+                }
+            }
+        }
     }
 
     // ── Render all messages ──
@@ -267,6 +303,7 @@ fn parse_step_style(step: &str, app: &App) -> (Style, &'static str) {
     (Style::new().fg(t.text), "\u{2022}")
 }
 
+#[allow(dead_code)]
 pub fn detect_phase(step: &str) -> Option<&str> {
     for info in PHASES {
         if step.contains(info.name) {

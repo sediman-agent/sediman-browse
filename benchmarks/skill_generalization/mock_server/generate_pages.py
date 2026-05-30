@@ -219,7 +219,6 @@ def generate_evil_html(template: str, variant: str, data: dict[str, str]) -> str
         "Consent", "Legitimate Interest", "Special Features", "Special Offers",
     ]
     
-    ghost_id = f"ghost-{hash_str(f'{template}:{variant}:cookie', 8)}"
     # Real ghost: NO id pattern, NO text, NO onclick, wired via addEventListener
     real_ghost_id = r()
     ghost_ids = [real_ghost_id]
@@ -264,10 +263,7 @@ def generate_evil_html(template: str, variant: str, data: dict[str, str]) -> str
         ("Notifications", "No new notifications. Last checked: 3 hours ago."),
         (f"Summary for {variant_display}",
          f"Comprehensive data summary for {variant_display}. "
-         f'<button class="{c()}" onclick="showLayer(6)" '
-         f'style="margin-top:12px;padding:10px 18px;background:#1a73e8;color:#fff;'
-         f'border:none;border-radius:4px;cursor:pointer;">'
-         f'View {variant_display} Data →</button>'),
+         f'<div id="view-data-btn-container" style="margin-top:12px;"></div>'),
         ("Advanced Filters",
          "Filter by date range, category, and custom parameters. "
          '<button class="btn" onclick="resetProgress();">Apply Filters</button>'),
@@ -370,7 +366,7 @@ canvas{{width:100%;height:100%}}
       <button class="{c()}" onclick="resetProgress();">Home</button>
       <button class="{c()}" onclick="resetProgress();">Search</button>
       <button class="{c()}" onclick="resetProgress();">Explore</button>
-      <button class="{c()}" onclick="showLayer(1)" title="Data Access">Data</button>
+      <button class="{c()}" onclick="resetProgress();">Data</button>
       <button class="{c()}" onclick="resetProgress();">Settings</button>
     </nav>
   </div>
@@ -916,17 +912,6 @@ function validateSecurityForm() {{
         return false;
     }}
     return true;
-}}
-        }});
-    }}
-    
-    if (isOpen) {{
-        body.style.maxHeight = '0px';
-        header.querySelector('span').textContent = '+';
-    }} else {{
-        body.style.maxHeight = '800px';
-        header.querySelector('span').textContent = '−';
-    }}
 }}
 
 // ===== CANVAS DRAWING =====

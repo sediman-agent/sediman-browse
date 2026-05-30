@@ -6,6 +6,7 @@ from collections.abc import Callable
 import structlog
 
 from sediman.agent.browser_agent import BrowserSubagent, BrowserResult
+from sediman.agent.coding_agent import CodingAgent, CodingResult
 from sediman.agent.guardrails import SharedScratchpad
 from sediman.agent.state import AgentPhase, AgentState
 from sediman.agent.subagents.permissions import PermissionRules, check_permission
@@ -36,6 +37,7 @@ class SubagentSession:
         on_step: Callable[[str, str], None] | None = None,
         flash_mode: bool = True,
         scratchpad: SharedScratchpad | None = None,
+        on_streaming_text: Callable[[str, str], None] | None = None,
     ):
         self.template = template
         self.task = task
@@ -48,6 +50,7 @@ class SubagentSession:
         self._scratchpad = scratchpad or SharedScratchpad()
         self._conversation: list[dict[str, str]] = []
         self._iterations = 0
+        self._on_streaming_text = on_streaming_text
 
     async def run(self) -> SubagentResult:
         logger.info(
@@ -68,6 +71,17 @@ class SubagentSession:
         state.phase = AgentPhase.EXECUTING
 
         try:
+            # Route to CodingSubagent for code-type agents
+            if self._is_coding_task(self.task):
+                result = await self._run_coding_step(self.task)
+                state.result = result.text
+                state.actions_taken = [
+                    {"tool": name, "args": {}}
+                    for name in result.tool_calls
+                ]
+                state.phase = AgentPhase.DONE
+                return self._assemble_result(state)
+
             # Try direct browser execution first if we have a browser
             if self.browser and self._is_browser_task(self.task):
                 result = await self._run_browser_step(self.task)
@@ -186,6 +200,20 @@ class SubagentSession:
         if perms.is_denied("browser") or perms.is_denied("web_search"):
             return False
         return True
+
+    def _is_coding_task(self, task: str) -> bool:
+        """Check if this agent template is a coding agent."""
+        perms = PermissionRules(self.template.permissions)
+        return perms.is_allowed("terminal") and perms.is_denied("browser")
+
+    async def _run_coding_step(self, task: str) -> CodingResult:
+        coding_agent = CodingAgent(
+            llm_provider=self.llm,
+            max_rounds=self.template.max_iterations,
+            on_step=self.on_step,
+            on_streaming_text=self._on_streaming_text,
+        )
+        return await coding_agent.run(task)
 
     async def _run_browser_step(self, task: str) -> BrowserResult:
         browser_agent = BrowserSubagent(

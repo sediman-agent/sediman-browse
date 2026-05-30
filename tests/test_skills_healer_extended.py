@@ -62,7 +62,7 @@ class TestHealSkillWithScreenshot:
         )
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="ss-skill", description="test", steps=["old step"])
@@ -88,7 +88,7 @@ class TestHealSkillWithScreenshot:
         )
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="dom-skill", description="test", steps=["old"])

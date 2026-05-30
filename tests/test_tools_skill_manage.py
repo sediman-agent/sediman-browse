@@ -11,7 +11,7 @@ from sediman.agent.tools import _handle_skill_manage
 class TestSkillManageDeleteAction:
     @pytest.mark.asyncio
     async def test_deletes_existing_skill(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=tmp_path)
             engine.create(name="del-me", description="desc", steps=["a"])
@@ -23,14 +23,14 @@ class TestSkillManageDeleteAction:
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_returns_error(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             result = await _handle_skill_manage(action="delete", name="nope")
             assert result.success is False
             assert "not found" in result.output.lower()
 
     @pytest.mark.asyncio
     async def test_delete_requires_name(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             result = await _handle_skill_manage(action="delete")
             assert result.success is False
             assert "required" in result.output.lower()
@@ -39,7 +39,7 @@ class TestSkillManageDeleteAction:
 class TestSkillManageCreateWithVerification:
     @pytest.mark.asyncio
     async def test_create_with_verification(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             result = await _handle_skill_manage(
                 action="create",
                 name="verified-skill",
@@ -58,7 +58,7 @@ class TestSkillManageCreateWithVerification:
 class TestSkillManagePatchWithVerification:
     @pytest.mark.asyncio
     async def test_patch_with_verification(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=tmp_path)
             engine.create(name="patch-ver", description="desc", steps=["a"])
@@ -77,7 +77,7 @@ class TestSkillManagePatchWithVerification:
 class TestSkillManageUnknownAction:
     @pytest.mark.asyncio
     async def test_unknown_action_returns_error(self, tmp_path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_path):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_path):
             result = await _handle_skill_manage(action="foobar")
             assert result.success is False
             assert "Unknown" in result.output

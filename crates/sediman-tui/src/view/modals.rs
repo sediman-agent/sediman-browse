@@ -75,8 +75,8 @@ fn fill_modal_bg(buf: &mut CellBuffer, modal: Rect, bg: Color, fg: Color) {
 pub fn render_help_modal(buf: &mut CellBuffer, area: Rect, app: &App) {
     let t = &app.theme;
 
-    let modal_w = (area.width as usize * 7 / 10).max(50).min(80) as u16;
-    let modal_h = (area.height as usize * 8 / 10).max(20).min(40) as u16;
+    let modal_w = (area.width as usize * 7 / 10).clamp(50, 80) as u16;
+    let modal_h = (area.height as usize * 8 / 10).clamp(20, 40) as u16;
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
 
     frame.draw_border(buf, Style::new().fg(t.primary), Style::new().fg(t.border));
@@ -101,6 +101,7 @@ pub fn render_help_modal(buf: &mut CellBuffer, area: Rect, app: &App) {
         ]),
         ("Skills", &[
             ("/skills", "List learned skills"),
+            ("/skills search <q>", "Search local skills"),
             ("/skill <name>", "Run a specific skill"),
             ("/run-skill <name>", "Alias for /skill"),
             ("/record", "Start recording a new skill"),
@@ -111,6 +112,8 @@ pub fn render_help_modal(buf: &mut CellBuffer, area: Rect, app: &App) {
             ("/hub search <q>", "Search hub for skills"),
             ("/hub install <id>", "Install a hub skill"),
             ("/hub info <id>", "Show skill details"),
+            ("/hub update <id>", "Update installed skill"),
+            ("/hub remove <id>", "Remove installed skill"),
             ("/hub publish", "Publish skill to hub"),
         ]),
         ("Browser", &[
@@ -185,7 +188,7 @@ pub fn render_info_modal(
     let t = &app.theme;
 
     let line_count = lines.len() as u16;
-    let modal_w = (area.width as usize * 7 / 10).max(50).min(80) as u16;
+    let modal_w = (area.width as usize * 7 / 10).clamp(50, 80) as u16;
     let content_h = line_count.min(area.height.saturating_sub(4));
     let modal_h = content_h + 4;
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
@@ -251,7 +254,7 @@ pub fn render_model_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
 
     let max_visible = 8u16;
     let visible = (filtered.len() as u16).min(max_visible);
-    let modal_w = (area.width * 6 / 10).max(48).min(60);
+    let modal_w = (area.width * 6 / 10).clamp(48, 60);
     let modal_h = (visible + 7).max(10).min(area.height.saturating_sub(2));
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
     let inner_w = frame.inner_w;
@@ -428,7 +431,7 @@ pub fn render_memory_editor(buf: &mut CellBuffer, area: Rect, app: &App) {
     let entry_count = app.memory_entries.len();
     let max_visible = 10u16;
     let visible = (entry_count as u16).min(max_visible);
-    let modal_w = (area.width * 7 / 10).max(50).min(64);
+    let modal_w = (area.width * 7 / 10).clamp(50, 64);
     let modal_h = (visible + 9).max(12).min(area.height.saturating_sub(2));
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
     let inner_w = frame.inner_w;
@@ -504,7 +507,7 @@ pub fn render_memory_editor(buf: &mut CellBuffer, area: Rect, app: &App) {
 
 pub fn render_soul_editor(buf: &mut CellBuffer, area: Rect, app: &App) {
     let t = &app.theme;
-    let modal_w = (area.width * 7 / 10).max(50).min(60);
+    let modal_w = (area.width * 7 / 10).clamp(50, 60);
     let modal_h = 14u16;
     let modal_x = area.x + (area.width.saturating_sub(modal_w)) / 2;
     let modal_y = area.y + (area.height.saturating_sub(modal_h)) / 2;
@@ -582,4 +585,146 @@ pub fn render_soul_editor(buf: &mut CellBuffer, area: Rect, app: &App) {
     y += 1;
     buf.draw_str(modal.x + 2, y, " Enter save \u{2502} Ctrl+R reset \u{2502} Type to edit ",
         Style::new().fg(t.text_muted).bg(t.background));
+}
+
+pub fn render_skill_browser(buf: &mut CellBuffer, area: Rect, app: &mut App) {
+    let t = &app.theme;
+    let query = app.skill_browser_filter.to_lowercase();
+    let filtered: Vec<(usize, &sediman_tui_bridge::HubSkill)> = app
+        .skill_browser_skills
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            if query.is_empty() {
+                return true;
+            }
+            let searchable = format!("{} {} {} {}", s.name, s.description, s.category, s.author).to_lowercase();
+            searchable.contains(&query)
+        })
+        .collect();
+
+    let modal_w = (area.width * 85 / 100).max(60).min(area.width.saturating_sub(4));
+    let max_items_on_screen = area.height.saturating_sub(8) as usize;
+    app.skill_browser_visible_rows = max_items_on_screen as u16;
+    let max_visible = filtered.len().min(max_items_on_screen);
+    let modal_h = (max_visible as u16 + 7).max(12).min(area.height.saturating_sub(2));
+    let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
+    let inner_w = frame.inner_w;
+
+    frame.draw_border(buf, Style::new().fg(t.primary), Style::new().fg(t.border));
+    frame.draw_title(
+        buf,
+        &format!(
+            " Hub Skills ({}/{}) ",
+            if query.is_empty() { app.skill_browser_skills.len() } else { filtered.len() },
+            app.skill_browser_skills.len()
+        ),
+        Style::new().fg(t.primary).bg(t.background).add_modifier(TextAttributes::bold()),
+    );
+    frame.draw_close_hint(buf, " Esc ", Style::new().fg(t.text_muted).bg(t.background));
+
+    let inner_x = frame.inner_x;
+    let mut y = frame.modal.y + 2;
+
+    let input_bg = t.background_panel;
+    for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+        buf.put_char(sx, y, ' ', Style::new().bg(input_bg).fg(t.text));
+    }
+    buf.draw_str(inner_x, y, "\u{276f} ", Style::new().fg(t.primary).bg(input_bg));
+    if app.skill_browser_filter.is_empty() {
+        buf.draw_str(
+            inner_x + 2,
+            y,
+            "Type to filter skills...",
+            Style::new().fg(t.text_muted).bg(input_bg),
+        );
+        buf.put_char(inner_x + 2, y, '\u{2588}', Style::new().fg(t.primary).bg(input_bg));
+    } else {
+        let max_input = inner_w.saturating_sub(4);
+        let display: String = app.skill_browser_filter.chars().take(max_input).collect();
+        buf.draw_str(inner_x + 2, y, &display, Style::new().fg(t.text).bg(input_bg));
+        let cx = inner_x + 2 + display_width(&display);
+        if cx < frame.modal.right() - 2 {
+            buf.put_char(cx, y, '\u{2588}', Style::new().fg(t.primary).bg(input_bg));
+        }
+    }
+    y += 1;
+
+    for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+        buf.put_char(sx, y, '\u{2500}', Style::new().fg(t.border_dim));
+    }
+    y += 1;
+
+    let hints_sep_y = frame.modal.bottom().saturating_sub(3);
+    let desc_area_y = hints_sep_y.saturating_sub(2);
+    let max_y = desc_area_y;
+
+    if filtered.is_empty() {
+        if app.skill_browser_skills.is_empty() {
+            buf.draw_str(inner_x, y, "No skills found in hub.", Style::new().fg(t.text_muted).bg(t.background));
+        } else {
+            buf.draw_str(inner_x, y, "No matches for filter.", Style::new().fg(t.text_muted).bg(t.background));
+        }
+    } else {
+        let scroll = app.skill_browser_scroll as usize;
+        let visible_items: Vec<_> = filtered.iter().skip(scroll).collect();
+        for (row_idx, &(orig_idx, skill)) in visible_items.iter().enumerate() {
+            let row_y = y + row_idx as u16;
+            if row_y >= max_y {
+                break;
+            }
+            let selected = *orig_idx == app.skill_browser_selected;
+            let is_installed = app.skill_browser_installed.contains(&skill.name);
+            let badge_w = if is_installed { 13 } else { 0 };
+            let max_name = inner_w.saturating_sub(6 + badge_w);
+            let name_display: String = truncate_str(&skill.name, max_name).to_string();
+            let badge = if is_installed { " \u{2713}installed" } else { "" };
+
+            if selected {
+                for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+                    buf.put_char(sx, row_y, ' ', Style::new().bg(t.primary).fg(t.background_darker));
+                }
+                buf.draw_str(
+                    inner_x,
+                    row_y,
+                    &format!("\u{25b8} {}{}", name_display, badge),
+                    Style::new()
+                        .bg(t.primary)
+                        .fg(t.background_darker)
+                        .add_modifier(TextAttributes::bold()),
+                );
+            } else {
+                let name_style = if is_installed {
+                    Style::new().fg(t.secondary).bg(t.background)
+                } else {
+                    Style::new().fg(t.text).bg(t.background)
+                };
+                buf.draw_str(inner_x, row_y, &format!("  {}{}", name_display, badge), name_style);
+            }
+        }
+
+        let sep_y = desc_area_y;
+        for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+            buf.put_char(sx, sep_y, '\u{2500}', Style::new().fg(t.border_dim));
+        }
+
+        let preview_y = sep_y + 1;
+        if let Some(&(_, selected_skill)) = filtered.get(app.skill_browser_selected) {
+            let max_desc = inner_w.saturating_sub(4);
+            let desc = truncate_str(&selected_skill.description, max_desc);
+            buf.draw_str(inner_x, preview_y, desc, Style::new().fg(t.text).bg(t.background));
+        }
+    }
+
+    let hints_sep_y = frame.modal.bottom().saturating_sub(3);
+    let hints_y = frame.modal.bottom().saturating_sub(2);
+    for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+        buf.put_char(sx, hints_sep_y, '\u{2500}', Style::new().fg(t.border_dim));
+    }
+    buf.draw_str(
+        frame.modal.x + 2,
+        hints_y,
+        " Enter install \u{2502} d uninstall \u{2502} i info \u{2502} \u{2191}\u{2193} navigate \u{2502} Type to filter ",
+        Style::new().fg(t.text_muted).bg(t.background),
+    );
 }

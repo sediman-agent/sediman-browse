@@ -2,12 +2,10 @@ use sediman_tui_core::command::{Command, CommandCategory};
 
 use crate::app::{App, AppModal, ModalLine};
 
-/// Check if an error is a connection failure (backend not running).
 fn is_connection_error(e: &str) -> bool {
     e.contains("Connection failed") || e.contains("No such file") || e.contains("os error 2")
 }
 
-/// Show a connection-error modal instead of dumping into chat.
 fn show_connection_error(app: &mut App, action: &str) {
     app.active_modal = Some(AppModal::Info {
         title: "Hub Unavailable".into(),
@@ -22,7 +20,6 @@ fn show_connection_error(app: &mut App, action: &str) {
     });
 }
 
-/// Show any other hub error as a modal.
 fn show_hub_error(app: &mut App, title: &str, e: &str) {
     if is_connection_error(e) {
         show_connection_error(app, title.to_lowercase().as_str());
@@ -40,6 +37,11 @@ fn show_hub_error(app: &mut App, title: &str, e: &str) {
 
 pub async fn handle_hub_browse(app: &mut App, args: &str) {
     let category = if args.is_empty() { None } else { Some(args) };
+
+    // Fetch installed skills so we can show [installed] badges
+    let installed = app.bridge.list_skills().await.unwrap_or_default();
+    app.skill_browser_installed = installed.iter().map(|s| s.name.clone()).collect();
+
     match app.bridge.hub_browse(category).await {
         Ok(skills) => {
             if skills.is_empty() {
@@ -53,19 +55,11 @@ pub async fn handle_hub_browse(app: &mut App, args: &str) {
                 });
                 return;
             }
-            let mut lines = vec![
-                ModalLine::heading(format!("  Hub Skills ({})", skills.len())),
-                ModalLine::blank(),
-            ];
-            for s in &skills {
-                lines.push(ModalLine::primary(format!("  {} v{}", s.name, s.version)));
-                lines.push(ModalLine::muted(format!("    by {} \u{2014} {} [{}]", s.author, s.description, s.trust)));
-            }
-            app.active_modal = Some(AppModal::Info {
-                title: "Hub \u{2014} Browse".into(),
-                lines,
-                scroll: 0,
-            });
+            app.skill_browser_skills = skills;
+            app.skill_browser_selected = 0;
+            app.skill_browser_filter.clear();
+            app.skill_browser_scroll = 0;
+            app.active_modal = Some(AppModal::SkillBrowser);
         }
         Err(e) => show_hub_error(app, "Hub Browse", &e.to_string()),
     }
@@ -96,19 +90,14 @@ pub async fn handle_hub_search(app: &mut App, args: &str) {
                 });
                 return;
             }
-            let mut lines = vec![
-                ModalLine::heading(format!("  Results for '{}'", args)),
-                ModalLine::blank(),
-            ];
-            for s in &skills {
-                lines.push(ModalLine::primary(format!("  {}", s.name)));
-                lines.push(ModalLine::muted(format!("    {}", s.description)));
-            }
-            app.active_modal = Some(AppModal::Info {
-                title: format!("Hub \u{2014} Search: {}", args),
-                lines,
-                scroll: 0,
-            });
+
+            let installed = app.bridge.list_skills().await.unwrap_or_default();
+            app.skill_browser_installed = installed.iter().map(|s| s.name.clone()).collect();
+            app.skill_browser_skills = skills;
+            app.skill_browser_filter = args.to_string();
+            app.skill_browser_selected = 0;
+            app.skill_browser_scroll = 0;
+            app.active_modal = Some(AppModal::SkillBrowser);
         }
         Err(e) => show_hub_error(app, "Hub Search", &e.to_string()),
     }
@@ -167,9 +156,9 @@ pub async fn handle_hub_info(app: &mut App, args: &str) {
         });
         return;
     }
-    match app.bridge.hub_info(args).await {
+    match app.bridge.hub_info_detail(args).await {
         Ok(skill) => {
-            let lines = vec![
+            let mut lines = vec![
                 ModalLine::heading(format!("  {} v{}", skill.name, skill.version)),
                 ModalLine::muted(format!("    by {}", skill.author)),
                 ModalLine::blank(),
@@ -178,6 +167,34 @@ pub async fn handle_hub_info(app: &mut App, args: &str) {
                 ModalLine::normal(format!("    Category: {}", skill.category)),
                 ModalLine::normal(format!("    Trust: {}", skill.trust)),
             ];
+            if let Some(ref license) = skill.license {
+                lines.push(ModalLine::normal(format!("    License: {}", license)));
+            }
+            if let Some(ref schedule) = skill.schedule {
+                lines.push(ModalLine::normal(format!("    Schedule: {}", schedule)));
+            }
+            if !skill.variables.is_empty() {
+                lines.push(ModalLine::blank());
+                lines.push(ModalLine::accent(format!("  Variables ({})", skill.variables.len())));
+                for v in &skill.variables {
+                    let default = v.default.as_deref().unwrap_or("");
+                    lines.push(ModalLine::normal(format!("    {} ({}): {}", v.name, v.description, default)));
+                }
+            }
+            if !skill.steps.is_empty() {
+                lines.push(ModalLine::blank());
+                lines.push(ModalLine::accent(format!("  Steps ({})", skill.steps.len())));
+                for (i, step) in skill.steps.iter().enumerate() {
+                    lines.push(ModalLine::normal(format!("    {}. {}", i + 1, step.description)));
+                }
+            }
+            if !skill.warnings.is_empty() {
+                lines.push(ModalLine::blank());
+                lines.push(ModalLine::error("  Warnings"));
+                for w in &skill.warnings {
+                    lines.push(ModalLine::normal(format!("    - {}", w)));
+                }
+            }
             app.active_modal = Some(AppModal::Info {
                 title: format!("Hub \u{2014} {}", args),
                 lines,
@@ -232,8 +249,52 @@ pub async fn handle_hub_install_github(app: &mut App, args: &str) {
     }
 }
 
+pub async fn handle_hub_update(app: &mut App, args: &str) {
+    let name = args.trim();
+    if name.is_empty() {
+        app.add_system_message("Usage: /hub update <name>".into());
+        return;
+    }
+    app.add_system_message(format!("Updating {}...", name));
+    match app.bridge.hub_update(name).await {
+        Ok(msg) => app.add_system_message(format!("Updated {}: {}", name, msg)),
+        Err(e) => show_hub_error(app, "Hub Update", &e.to_string()),
+    }
+}
+
+pub async fn handle_hub_remove(app: &mut App, args: &str) {
+    let name = args.trim();
+    if name.is_empty() {
+        app.add_system_message("Usage: /hub remove <name>".into());
+        return;
+    }
+    match app.bridge.hub_remove(name).await {
+        Ok(()) => app.add_system_message(format!("Removed {}", name)),
+        Err(e) => show_hub_error(app, "Hub Remove", &e.to_string()),
+    }
+}
+
+pub async fn handle_hub_check_update(app: &mut App, args: &str) {
+    let name = args.trim();
+    if name.is_empty() {
+        app.add_system_message("Usage: /hub check-update <name>".into());
+        return;
+    }
+    match app.bridge.hub_check_update(name).await {
+        Ok((has_update, msg)) => {
+            if has_update {
+                app.add_system_message(format!("Update available for {}: {}", name, msg));
+            } else {
+                app.add_system_message(format!("{} is up to date. {}", name, msg));
+            }
+        }
+        Err(e) => show_hub_error(app, "Hub Check Update", &e.to_string()),
+    }
+}
+
 pub async fn handle_hub_publish(app: &mut App, args: &str) {
-    if args.is_empty() {
+    let name = args.trim();
+    if name.is_empty() {
         app.active_modal = Some(AppModal::Info {
             title: "Hub \u{2014} Publish".into(),
             lines: vec![
@@ -244,8 +305,11 @@ pub async fn handle_hub_publish(app: &mut App, args: &str) {
         });
         return;
     }
-    app.add_system_message(format!("Publishing {}...", args));
-    app.add_system_message("Publish requires a GitHub token. Use the Python CLI or SDK for full publish support.".into());
+    app.add_system_message(format!("Publishing {}...", name));
+    match app.bridge.hub_publish(name).await {
+        Ok(msg) => app.add_system_message(format!("Published {}: {}", name, msg)),
+        Err(e) => show_hub_error(app, "Hub Publish", &e.to_string()),
+    }
 }
 
 pub static CMD_HUB_BROWSE: Command = Command {
@@ -287,5 +351,26 @@ pub static CMD_HUB_PUBLISH: Command = Command {
     name: "/hub publish",
     aliases: &[],
     description: "Publish a local skill: /hub publish <name>",
+    category: CommandCategory::Hub,
+};
+
+pub static CMD_HUB_UPDATE: Command = Command {
+    name: "/hub update",
+    aliases: &[],
+    description: "Update an installed skill: /hub update <name>",
+    category: CommandCategory::Hub,
+};
+
+pub static CMD_HUB_REMOVE: Command = Command {
+    name: "/hub remove",
+    aliases: &[],
+    description: "Remove an installed skill: /hub remove <name>",
+    category: CommandCategory::Hub,
+};
+
+pub static CMD_HUB_CHECK_UPDATE: Command = Command {
+    name: "/hub check-update",
+    aliases: &[],
+    description: "Check for skill updates: /hub check-update <name>",
     category: CommandCategory::Hub,
 };

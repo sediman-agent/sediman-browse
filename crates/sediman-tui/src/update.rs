@@ -314,6 +314,162 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                     }
                 }
 
+                // SkillBrowser — interactive hub skill browsing with filter + install
+                if matches!(app.active_modal, Some(AppModal::SkillBrowser)) {
+                    let query = app.skill_browser_filter.to_lowercase();
+                    let filtered_count = app
+                        .skill_browser_skills
+                        .iter()
+                        .filter(|s| {
+                            if query.is_empty() { return true; }
+                            let searchable = format!("{} {} {} {}", s.name, s.description, s.category, s.author).to_lowercase();
+                            searchable.contains(&query)
+                        })
+                        .count();
+
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.skill_browser_filter.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.skill_browser_filter.clear();
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                            if app.skill_browser_selected < filtered_count.saturating_sub(1) {
+                                app.skill_browser_selected += 1;
+                                let vr = app.skill_browser_visible_rows.saturating_sub(1);
+                                let max_scroll = (app.skill_browser_selected as u16).saturating_sub(vr);
+                                if app.skill_browser_scroll < max_scroll {
+                                    app.skill_browser_scroll = max_scroll;
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if app.skill_browser_selected > 0 {
+                                app.skill_browser_selected -= 1;
+                                if app.skill_browser_selected < app.skill_browser_scroll as usize {
+                                    app.skill_browser_scroll = app.skill_browser_selected as u16;
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::PageDown => {
+                            let jump = 5.min(filtered_count.saturating_sub(1));
+                            app.skill_browser_selected = (app.skill_browser_selected + jump).min(filtered_count.saturating_sub(1));
+                            let vr = app.skill_browser_visible_rows.saturating_sub(1);
+                            let max_scroll = (app.skill_browser_selected as u16).saturating_sub(vr);
+                            if app.skill_browser_scroll < max_scroll {
+                                app.skill_browser_scroll = max_scroll;
+                            }
+                            return;
+                        }
+                        KeyCode::PageUp => {
+                            let jump = 5.min(app.skill_browser_selected);
+                            app.skill_browser_selected -= jump;
+                            if app.skill_browser_selected < app.skill_browser_scroll as usize {
+                                app.skill_browser_scroll = app.skill_browser_selected as u16;
+                            }
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            // Install the selected skill
+                            let q = app.skill_browser_filter.to_lowercase();
+                            let filtered: Vec<&sediman_tui_bridge::HubSkill> = app
+                                .skill_browser_skills
+                                .iter()
+                                .filter(|s| {
+                                    if q.is_empty() { return true; }
+                                    let searchable = format!("{} {} {} {}", s.name, s.description, s.category, s.author).to_lowercase();
+                                    searchable.contains(&q)
+                                })
+                                .collect();
+                            if let Some(skill) = filtered.get(app.skill_browser_selected) {
+                                let name = skill.name.clone();
+                                app.add_system_message(format!("Installing {} from hub...", name));
+                                match app.bridge.hub_install(&name, false).await {
+                                    Ok(()) => {
+                                        app.add_system_message(format!("Installed {}", name));
+                                        if !app.skill_browser_installed.contains(&name) {
+                                            app.skill_browser_installed.push(name);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.add_error_message(format!("Install failed: {}", e));
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::Char('i') => {
+                            let q = app.skill_browser_filter.to_lowercase();
+                            let filtered: Vec<&sediman_tui_bridge::HubSkill> = app
+                                .skill_browser_skills
+                                .iter()
+                                .filter(|s| {
+                                    if q.is_empty() { return true; }
+                                    let searchable = format!("{} {} {} {}", s.name, s.description, s.category, s.author).to_lowercase();
+                                    searchable.contains(&q)
+                                })
+                                .collect();
+                            if let Some(skill) = filtered.get(app.skill_browser_selected) {
+                                let name = skill.name.clone();
+                                app.skill_browser_filter.clear();
+                                app.active_modal = None;
+                                super::commands::hub::handle_hub_info(app, &name).await;
+                            }
+                            return;
+                        }
+                        KeyCode::Char('d') => {
+                            let q = app.skill_browser_filter.to_lowercase();
+                            let filtered: Vec<&sediman_tui_bridge::HubSkill> = app
+                                .skill_browser_skills
+                                .iter()
+                                .filter(|s| {
+                                    if q.is_empty() { return true; }
+                                    let searchable = format!("{} {} {} {}", s.name, s.description, s.category, s.author).to_lowercase();
+                                    searchable.contains(&q)
+                                })
+                                .collect();
+                            if let Some(skill) = filtered.get(app.skill_browser_selected) {
+                                let name = skill.name.clone();
+                                if app.skill_browser_installed.contains(&name) {
+                                    app.add_system_message(format!("Uninstalling {}...", name));
+                                    match app.bridge.delete_skill(&name).await {
+                                        Ok(()) => {
+                                            app.skill_browser_installed.retain(|n| n != &name);
+                                            app.add_system_message(format!("Uninstalled {}", name));
+                                        }
+                                        Err(e) => {
+                                            app.add_error_message(format!("Uninstall failed: {}", e));
+                                        }
+                                    }
+                                } else {
+                                    app.add_error_message(format!("{} is not installed", name));
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::Backspace | KeyCode::Delete => {
+                            app.skill_browser_filter.pop();
+                            app.skill_browser_selected = 0;
+                            app.skill_browser_scroll = 0;
+                            return;
+                        }
+                        KeyCode::Char(c) => {
+                            app.skill_browser_filter.push(c);
+                            app.skill_browser_selected = 0;
+                            app.skill_browser_scroll = 0;
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
                 // Help / Info modal handling — vim-style navigation
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
@@ -405,8 +561,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                             if input.starts_with('/') {
                                 // Slash commands always work, even while agent is running
                                 handle_slash(app, &input).await;
-                            } else if input.starts_with('!') {
-                                let cmd = &input[1..];
+                            } else if let Some(cmd) = input.strip_prefix('!') {
                                 handle_shell(app, cmd).await;
                             } else if app.agent_running {
                                 // Queue non-slash text as a follow-up message
@@ -488,8 +643,8 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
         AppEvent::Shutdown => {
             app.running = false;
         }
-        AppEvent::AgentStep(phase, action) => {
-            app.append_step(format!("{} {}", phase, action));
+        AppEvent::AgentStep(_phase, action) => {
+            app.append_step(action);
         }
         AppEvent::AgentResult(success, result_text, elapsed_secs) => {
             let skill_created = None;
@@ -505,6 +660,9 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
         }
         AppEvent::CommandOutput(text) => {
             app.add_system_message(text);
+        }
+        AppEvent::StreamingToken(token, phase) => {
+            app.append_streaming_token(&token, &phase);
         }
     }
 }
@@ -558,16 +716,22 @@ async fn handle_slash(app: &mut App, input: &str) {
                 "install-github" => hub::handle_hub_install_github(app, sub_args).await,
                 "info" => hub::handle_hub_info(app, sub_args).await,
                 "publish" => hub::handle_hub_publish(app, sub_args).await,
+                "update" => hub::handle_hub_update(app, sub_args).await,
+                "remove" => hub::handle_hub_remove(app, sub_args).await,
+                "check-update" => hub::handle_hub_check_update(app, sub_args).await,
                 _ => {
                     app.active_modal = Some(AppModal::Info {
                         title: "Hub".into(),
                         lines: vec![
                             crate::app::ModalLine::blank(),
-                            crate::app::ModalLine::muted("  /hub browse          Browse skills"),
-                            crate::app::ModalLine::muted("  /hub search <query>  Search skills"),
-                            crate::app::ModalLine::muted("  /hub install <name>  Install a skill"),
-                            crate::app::ModalLine::muted("  /hub info <name>     Show skill details"),
-                            crate::app::ModalLine::muted("  /hub publish <name>  Publish a skill"),
+                            crate::app::ModalLine::muted("  /hub browse            Browse skills"),
+                            crate::app::ModalLine::muted("  /hub search <query>    Search skills"),
+                            crate::app::ModalLine::muted("  /hub install <name>    Install a skill"),
+                            crate::app::ModalLine::muted("  /hub info <name>       Show skill details"),
+                            crate::app::ModalLine::muted("  /hub update <name>     Update a skill"),
+                            crate::app::ModalLine::muted("  /hub remove <name>     Remove a skill"),
+                            crate::app::ModalLine::muted("  /hub check-update <n>  Check for updates"),
+                            crate::app::ModalLine::muted("  /hub publish <name>    Publish a skill"),
                         ],
                         scroll: 0,
                     });
@@ -683,7 +847,7 @@ pub async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSe
                 if agent_result.success {
                     let _ = tx.send(AppEvent::CommandOutput(format!(
                         "Done ({}s){}{}",
-                        agent_result.elapsed_secs,
+                        elapsed,
                         agent_result.skill_created
                             .as_ref()
                             .map(|s| format!(" - Skill: {}", s))
@@ -727,6 +891,11 @@ async fn run_agent_task_inner(
                 match msg {
                     Some(ws_msg) => {
                         match ws_msg.msg_type.as_str() {
+                            "streaming" => {
+                                if let Some(ref st) = ws_msg.streaming_token {
+                                    let _ = tx.send(AppEvent::StreamingToken(st.token.clone(), st.phase.clone()));
+                                }
+                            }
                             "step" => {
                                 if let Some(ref event) = ws_msg.event {
                                     let phase = event.phase.clone();
@@ -1146,5 +1315,439 @@ mod tests {
         let mut app = test_app();
         let tx = test_tx();
         handle_message(&mut app, AppEvent::Resize(80, 24), &tx).await;
+    }
+
+    // ── SkillBrowser modal tests ──
+
+    #[tokio::test]
+    async fn test_skill_browser_esc_closes() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![sediman_tui_bridge::HubSkill {
+            name: "test".into(), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }];
+        app.skill_browser_filter = "foo".into();
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert!(app.active_modal.is_none());
+        assert!(app.skill_browser_filter.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_down_moves_selection() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "b".into(), description: "b".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        assert_eq!(app.skill_browser_selected, 0);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 1);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_up_does_not_underflow() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        assert_eq!(app.skill_browser_selected, 0);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Up, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_j_moves_down() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "b".into(), description: "b".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "c".into(), description: "c".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('j'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 1);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 2);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 2);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_k_moves_up() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "b".into(), description: "b".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.skill_browser_selected = 1;
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('k'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_tab_moves_down() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "b".into(), description: "b".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Tab, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 1);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_page_down() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..10).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 5);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_page_up() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..10).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.skill_browser_selected = 7;
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageUp, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 2);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_typing_filters() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "google-search".into(), description: "Search Google".into(), category: "search".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+            sediman_tui_bridge::HubSkill {
+                name: "web-scraper".into(), description: "Scrape websites".into(), category: "data".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('g'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_filter, "g");
+        assert_eq!(app.skill_browser_selected, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_backspace_removes_filter() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.skill_browser_filter = "abc".into();
+        app.skill_browser_selected = 2;
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Backspace, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_filter, "ab");
+        assert_eq!(app.skill_browser_selected, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_ctrl_c_closes() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('c'), crossterm::event::KeyModifiers::CONTROL);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert!(app.active_modal.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_q_closes() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "a".into(), description: "a".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert!(app.active_modal.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_scroll_advances_on_down() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..50).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let down = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE);
+        assert_eq!(app.skill_browser_scroll, 0);
+        for _ in 0..15 {
+            handle_message(&mut app, AppEvent::Key(down.clone()), &tx).await;
+        }
+        assert_eq!(app.skill_browser_selected, 15);
+        assert!(app.skill_browser_scroll > 0, "scroll should have advanced past 0, got {}", app.skill_browser_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_scroll_retreats_on_up() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..50).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.skill_browser_selected = 20;
+        app.skill_browser_scroll = 15;
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let up = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Up, crossterm::event::KeyModifiers::NONE);
+        for _ in 0..5 {
+            handle_message(&mut app, AppEvent::Key(up.clone()), &tx).await;
+        }
+        assert_eq!(app.skill_browser_selected, 15);
+        assert!(app.skill_browser_scroll <= 15);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_scroll_resets_on_filter() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..50).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.skill_browser_selected = 30;
+        app.skill_browser_scroll = 20;
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('s'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 0);
+        assert_eq!(app.skill_browser_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_scroll_resets_on_backspace() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..50).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.skill_browser_selected = 30;
+        app.skill_browser_scroll = 20;
+        app.skill_browser_filter = "abc".into();
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Backspace, crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert_eq!(app.skill_browser_selected, 0);
+        assert_eq!(app.skill_browser_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_page_down_scroll_advances() {
+        let mut app = test_app();
+        app.skill_browser_skills = (0..50).map(|i| sediman_tui_bridge::HubSkill {
+            name: format!("skill-{}", i), description: "d".into(), category: "c".into(),
+            author: "a".into(), version: 1, trust: "t".into(),
+        }).collect();
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let pd = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE);
+        for _ in 0..3 {
+            handle_message(&mut app, AppEvent::Key(pd.clone()), &tx).await;
+        }
+        assert!(app.skill_browser_selected > 10, "selected should be past 10 after 3 page downs");
+        assert!(app.skill_browser_scroll > 0, "PageDown should advance scroll after enough pages");
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_d_uninstall_not_installed() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "test-skill".into(), description: "d".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('d'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        let has_err = app.messages.iter().any(|m| matches!(m, ChatMessage::Error { text } if text.contains("not installed")));
+        assert!(has_err);
+    }
+
+    #[tokio::test]
+    async fn test_skill_browser_d_uninstall_installed() {
+        let mut app = test_app();
+        app.skill_browser_skills = vec![
+            sediman_tui_bridge::HubSkill {
+                name: "test-skill".into(), description: "d".into(), category: "c".into(),
+                author: "a".into(), version: 1, trust: "t".into(),
+            },
+        ];
+        app.skill_browser_installed = vec!["test-skill".into()];
+        app.active_modal = Some(crate::app::AppModal::SkillBrowser);
+        let tx = test_tx();
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('d'), crossterm::event::KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        let has_uninstall = app.messages.iter().any(|m| {
+            matches!(m, ChatMessage::System { text } if text.contains("Uninstalling"))
+        });
+        assert!(has_uninstall);
+    }
+
+    // ── /skills search and /hub new subcommand routing tests ──
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_update_routing() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub update my-skill").await;
+        let has_msg = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Updating")));
+        assert!(has_msg);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_remove_routing() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub remove my-skill").await;
+        let has_remove = app.active_modal.is_some()
+            || app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Removed")));
+        assert!(has_remove);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_check_update_routing() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub check-update my-skill").await;
+        let has_check = app.active_modal.is_some()
+            || app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("up to date") || text.contains("Update available")));
+        assert!(has_check);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_publish_routing() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub publish my-skill").await;
+        let has_msg = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Publishing") || text.contains("Connection")));
+        assert!(has_msg);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_update_empty() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub update").await;
+        let has_usage = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Usage")));
+        assert!(has_usage);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_remove_empty() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub remove").await;
+        let has_usage = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Usage")));
+        assert!(has_usage);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_check_update_empty() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub check-update").await;
+        let has_usage = app.messages.iter().any(|m| matches!(m, ChatMessage::System { text } if text.contains("Usage")));
+        assert!(has_usage);
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_publish_empty() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub publish").await;
+        assert!(app.active_modal.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_slash_hub_shows_all_subcommands() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/hub").await;
+        if let Some(crate::app::AppModal::Info { lines, .. }) = &app.active_modal {
+            let text: String = lines.iter().map(|l| l.text.clone()).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("/hub update"));
+            assert!(text.contains("/hub remove"));
+            assert!(text.contains("/hub check-update"));
+            assert!(text.contains("/hub publish"));
+        } else {
+            panic!("Expected Info modal");
+        }
     }
 }

@@ -68,20 +68,20 @@ class TestSkillAuditorAudit:
     @pytest.mark.asyncio
     async def test_returns_summary_when_no_skills(self, mock_llm, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             auditor = SkillAuditor(mock_llm)
             result = await auditor.audit()
             assert result["actions"] == []
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_fast_path_when_no_stale_skills(self, mock_llm, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -94,15 +94,15 @@ class TestSkillAuditorAudit:
             assert "active" in result["summary"].lower()
             mock_llm.chat.assert_not_called()
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
 
 class TestSkillAuditorApplyActions:
     @pytest.mark.asyncio
     async def test_archive_action_patches_category(self, mock_llm, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -118,13 +118,13 @@ class TestSkillAuditorApplyActions:
             archived = engine.read("to-archive")
             assert archived["category"] == "archived"
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_delete_action_removes_skill(self, mock_llm, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -139,4 +139,4 @@ class TestSkillAuditorApplyActions:
 
             assert engine.read("to-delete") is None
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original

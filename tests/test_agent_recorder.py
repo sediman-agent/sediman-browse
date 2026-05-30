@@ -70,7 +70,7 @@ class TestSkillRecorderRecord:
             {"action": "extract"},
         ]
 
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             name = recorder.record("get nvidia price", plan, "NVDA: $131", actions)
 
         assert name == "nvda-price"
@@ -93,7 +93,7 @@ class TestSkillRecorderRecord:
         )
         actions = [{"action": "navigate"}, {"action": "extract"}]
 
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             name = recorder.record("check server", plan, "OK", actions)
 
         from sediman.skills.engine import SkillEngine
@@ -113,7 +113,7 @@ class TestSkillRecorderRecord:
         actions = [{"action": "navigate"}, {"action": "click"}]
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
 
             engine = SkillEngine(skills_dir=skills_dir)

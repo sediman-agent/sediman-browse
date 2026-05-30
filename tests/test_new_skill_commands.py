@@ -18,7 +18,7 @@ def runner():
 @pytest.fixture
 def tmp_skills(tmp_sediman_dir: Path):
     skills_dir = tmp_sediman_dir / "skills"
-    with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+    with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
         yield skills_dir
 
 
@@ -28,7 +28,7 @@ class TestSkillInstallFromGitHub:
             {"name": "gh-test", "description": "From GitHub", "steps": ["s1"]}
         )
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
         ):
             mock_installer = MagicMock()
@@ -43,7 +43,7 @@ class TestSkillInstallFromGitHub:
 
     def test_install_from_github_failure(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
         ):
             mock_installer = MagicMock()
@@ -54,7 +54,7 @@ class TestSkillInstallFromGitHub:
 
     def test_install_with_force(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
         ):
             mock_installer = MagicMock()
@@ -69,7 +69,7 @@ class TestSkillInstallFromGitHub:
         self, runner: CliRunner, tmp_skills: Path
     ):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockGH,
             patch("sediman.skills.hub.HubClient") as MockHub,
         ):
@@ -84,7 +84,7 @@ class TestSkillInstallFromGitHub:
 class TestSkillInstallFromHub:
     def test_install_from_hub_by_name(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.HubClient") as MockHub,
         ):
             mock_client = MagicMock()
@@ -96,7 +96,7 @@ class TestSkillInstallFromHub:
 
     def test_install_from_hub_with_flag(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.HubClient") as MockHub,
             patch("sediman.skills.hub.GitHubInstaller") as MockGH,
         ):
@@ -112,7 +112,7 @@ class TestSkillInstallFromHub:
 
     def test_install_from_hub_failure(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.HubClient") as MockHub,
         ):
             mock_client = MagicMock()
@@ -165,7 +165,7 @@ class TestSkillSearch:
 class TestSkillUpdate:
     def test_update_specific_skill(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
@@ -180,7 +180,7 @@ class TestSkillUpdate:
         from sediman.skills.hub import LockEntry
 
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
@@ -198,13 +198,13 @@ class TestSkillUpdate:
         assert mock_installer.update_skill.call_count == 2
 
     def test_update_no_name_no_all(self, runner: CliRunner, tmp_skills: Path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_skills):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills):
             result = runner.invoke(main, ["skill", "update"])
         assert result.exit_code == 1
 
     def test_update_failure(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
@@ -220,7 +220,7 @@ class TestSkillOutdated:
         from sediman.skills.hub import LockEntry
 
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
@@ -242,7 +242,7 @@ class TestSkillOutdated:
         from sediman.skills.hub import LockEntry
 
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.GitHubInstaller") as MockInstaller,
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
@@ -260,7 +260,7 @@ class TestSkillOutdated:
 
     def test_outdated_no_tracked_skills(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.SkillLockFile") as MockLock,
         ):
             mock_lock = MagicMock()
@@ -275,7 +275,7 @@ class TestSkillInfo:
     def test_skill_info_existing(self, runner: CliRunner, tmp_skills: Path):
         from sediman.skills.engine import SkillEngine
 
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_skills):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills):
             engine = SkillEngine(skills_dir=tmp_skills)
             engine.create(
                 name="info-test", description="Test skill for info", steps=["s1"]
@@ -286,7 +286,7 @@ class TestSkillInfo:
         assert "Test skill for info" in result.output
 
     def test_skill_info_missing(self, runner: CliRunner, tmp_skills: Path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_skills):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills):
             result = runner.invoke(main, ["skill", "info", "nonexistent"])
         assert result.exit_code == 1
 
@@ -296,7 +296,7 @@ class TestSkillInfo:
 
         lock_path = tmp_skills.parent / "skills-lock.json"
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub._LOCK_FILE", lock_path),
         ):
             engine = SkillEngine(skills_dir=tmp_skills)
@@ -333,7 +333,7 @@ class TestLegacyHubCommands:
 
     def test_hub_install(self, runner: CliRunner, tmp_skills: Path):
         with (
-            patch("sediman.skills.engine.SKILLS_DIR", tmp_skills),
+            patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_skills),
             patch("sediman.skills.hub.HubClient") as MockHub,
         ):
             mock_client = MagicMock()
@@ -359,6 +359,6 @@ class TestLegacyHubCommands:
 
 class TestSkillInstallBundled:
     def test_install_bundled_no_dir(self, runner: CliRunner, tmp_sediman_dir: Path):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             result = runner.invoke(main, ["skill", "install-bundled"])
         assert result.exit_code == 1 or "No bundled" in result.output

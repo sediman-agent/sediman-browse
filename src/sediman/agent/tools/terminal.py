@@ -66,9 +66,12 @@ async def _handle_terminal(
             command=command[:80],
         )
 
-    output = result.output
+    output = result.output or ""
     if len(output) > 10000:
         output = output[:10000] + "\n... (output truncated)"
+
+    if not result.success and not result.timed_out:
+        output = _format_error_output(command, result.exit_code, output)
 
     return ToolResult(
         success=result.success,
@@ -80,3 +83,61 @@ async def _handle_terminal(
             "timed_out": result.timed_out,
         },
     )
+
+
+def _format_error_output(command: str, exit_code: int, output: str) -> str:
+    header = (
+        f"[Command failed with exit code {exit_code}]\n"
+        f"Command: {command[:200]}\n"
+    )
+
+    output_lines = output.strip().splitlines() if output.strip() else []
+    errors = [l for l in output_lines if _is_error_line(l)]
+    warnings = [l for l in output_lines if _is_warning_line(l)]
+
+    parts = [header]
+    if output.strip():
+        parts.append(f"--- Full output ({len(output_lines)} lines) ---")
+        parts.append(output)
+
+    if errors:
+        parts.append(
+            f"\n--- {len(errors)} error(s) detected ---\n"
+            + "\n".join(errors[:20])
+        )
+    if warnings and not errors:
+        parts.append(
+            f"\n--- {len(warnings)} warning(s) ---\n"
+            + "\n".join(warnings[:10])
+        )
+
+    parts.append(
+        f"\n--- Action required ---\n"
+        f"Read the error output above. Diagnose the root cause, then fix the issue "
+        f"and re-run the command. If the same error persists, try a different approach "
+        f"or use web_search to research the error message."
+    )
+
+    return "\n".join(parts)
+
+
+def _is_error_line(line: str) -> bool:
+    line_lower = line.lower()
+    error_indicators = [
+        "error:", "error ", "traceback", "exception:", "exception ",
+        "fatal:", "fatal ", "panic:", "panic ", "failed:", "failed ",
+        "cannot find", "not found", "permission denied", "command not found",
+        "no such file", "syntax error", "typeerror:", "valueerror:",
+        "modulenotfounderror:", "importerror:", "segmentation fault",
+        "aborted", "killed", "out of memory",
+    ]
+    return any(ind in line_lower for ind in error_indicators)
+
+
+def _is_warning_line(line: str) -> bool:
+    line_lower = line.lower()
+    warning_indicators = [
+        "warning:", "warning ", "deprecated", "deprecation",
+        "warn ", "warn:", "notice:", "note:",
+    ]
+    return any(ind in line_lower for ind in warning_indicators)

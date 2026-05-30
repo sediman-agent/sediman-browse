@@ -252,6 +252,107 @@ class OpenAICompatibleProvider(LLMProvider):
             if delta and delta.content:
                 yield delta.content
 
+    async def chat_stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition],
+        system: str | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Stream tokens from the LLM while also handling tool calls.
+
+        If the LLM produces text tokens, they are yielded via on_token.
+        If the LLM produces tool calls, the full LLMResponse is returned.
+        This enables real-time streaming of the LLM's text output.
+        """
+        import typing
+
+        all_messages: list[dict[str, Any]] = []
+        if system:
+            all_messages.append({"role": "system", "content": system})
+        all_messages.extend(messages)
+
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                },
+            }
+            for t in tools
+        ]
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": all_messages,
+            "stream": True,
+        }
+        if openai_tools:
+            kwargs["tools"] = openai_tools
+
+        stream = await self.client.chat.completions.create(**kwargs)
+
+        text_parts: list[str] = []
+        tool_calls_map: dict[int, dict[str, Any]] = {}
+        has_tool_calls = False
+
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if delta and delta.content:
+                text_parts.append(delta.content)
+                if on_token:
+                    try:
+                        on_token(delta.content)
+                    except Exception:
+                        pass
+
+            if delta and delta.tool_calls:
+                has_tool_calls = True
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index if tc_delta.index is not None else 0
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    entry = tool_calls_map[idx]
+                    if tc_delta.id:
+                        entry["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            entry["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            entry["arguments"] += tc_delta.function.arguments
+
+            if choice.finish_reason in ("stop", "tool_calls"):
+                break
+
+        text = "".join(text_parts)
+        tool_calls: list[ToolCall] = []
+        if has_tool_calls:
+            for idx in sorted(tool_calls_map.keys()):
+                entry = tool_calls_map[idx]
+                try:
+                    args = json.loads(entry["arguments"]) if entry["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(
+                    ToolCall(id=entry["id"], name=entry["name"], arguments=args)
+                )
+
+        return LLMResponse(
+            text=text if text else None,
+            tool_calls=tool_calls,
+            done=not tool_calls,
+        )
+
     async def chat(
         self,
         messages: list[dict[str, Any]],

@@ -26,6 +26,9 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     registry.register(&hub::CMD_HUB_INSTALL_GITHUB);
     registry.register(&hub::CMD_HUB_INFO);
     registry.register(&hub::CMD_HUB_PUBLISH);
+    registry.register(&hub::CMD_HUB_UPDATE);
+    registry.register(&hub::CMD_HUB_REMOVE);
+    registry.register(&hub::CMD_HUB_CHECK_UPDATE);
     registry.register(&memory::CMD_MEMORY);
     registry.register(&memory::CMD_REMEMBER);
     registry.register(&model::CMD_MODEL);
@@ -69,7 +72,7 @@ mod tests {
         let mut registry = CommandRegistry::new();
         register_commands(&mut registry);
         let all = registry.all();
-        assert_eq!(all.len(), 39);
+        assert_eq!(all.len(), 42);
     }
 
     #[test]
@@ -115,6 +118,9 @@ mod tests {
         assert!(registry.get("/hub install-github").is_some());
         assert!(registry.get("/hub info").is_some());
         assert!(registry.get("/hub publish").is_some());
+        assert!(registry.get("/hub update").is_some());
+        assert!(registry.get("/hub remove").is_some());
+        assert!(registry.get("/hub check-update").is_some());
     }
 
     #[test]

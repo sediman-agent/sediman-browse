@@ -206,13 +206,13 @@ class TestSkillRecorderRecordAutoLearn:
         ]
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             name = recorder.record("search for python", plan, "done", actions, engine=engine)
 
         assert name is not None
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             skill = engine.read(name)
@@ -229,13 +229,13 @@ class TestSkillRecorderRecordAutoLearn:
         ]
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             name = recorder.record("search google", plan, "done", actions, engine=engine)
 
         assert name is not None
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             skill = engine.read(name)

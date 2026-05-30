@@ -3,6 +3,7 @@ use std::io::{self, Write as IoWrite};
 
 use super::{Cell, CellBuffer, Color, Style};
 
+#[derive(Default)]
 pub struct AnsiWriter {
     last_fg: Option<Color>,
     last_bg: Option<Color>,
@@ -10,10 +11,7 @@ pub struct AnsiWriter {
 
 impl AnsiWriter {
     pub fn new() -> Self {
-        Self {
-            last_fg: None,
-            last_bg: None,
-        }
+        Self::default()
     }
 
     pub fn clear_all(stdout: &mut dyn IoWrite) {

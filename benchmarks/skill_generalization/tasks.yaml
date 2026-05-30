@@ -8,15 +8,20 @@ templates:
     variants: ["AAPL", "NVDA", "AMD"]
     expected_keys: ["revenue", "net_income", "eps"]
     golden_path:
-      - "Click hidden nav button (opacity 0.005, onclick='showLayer(1)')"
+      - "Wait for page to load (critical: the first nav button is injected by JS after ~0.5s delay, NOT in initial DOM)"
+      - "Find a button element with opacity:0.005 and title='Continue' (injected dynamically, no onclick attribute)"
+      - "Click the injected hidden nav button (id starts with 'nav-btn-') to reach Terms of Service"
       - "Click 'I Agree — Continue' in Terms of Service"
-      - "Check consent checkbox for {variant} data processing"
-      - "Type '{variant}' in confirm input field and click 'Cancel & Continue'"
-      - "Find ghost button (empty text, no onclick attribute, id starts with 'ghost-') and click it"
-      - "Click hidden submit button (id='security-submit-btn') in security layer"
-      - "Expand 'Summary for {variant}' accordion header (item 12 of 15)"
-      - "Click 'View {variant} Data →' button"
-      - "Wait 3 seconds for dynamic data table to build (JS generated, not static)"
+      - "Check consent checkbox for {variant} data processing (the checkbox has id='consent-{variant}')"
+      - "Type '{variant}' in confirm input field (id='confirm-input') and click 'Cancel & Continue'"
+      - "In cookie settings layer: look for ghost buttons — 10 near-identical transparent buttons (opacity:0.005, empty text)"
+      - "Find the REAL ghost button among 10 decoys — 9 decoys reset progress, only the real one advances"
+      - "Clue: use evaluate() to test each ghost button — the real one DOES NOT call resetProgress when clicked"
+      - "Fill security form: type any 6+ char code, type 'human', type '4' for 2+2, read CAPTCHA code from canvas image"
+      - "Click hidden submit button (id='security-submit-btn', opacity:0.005) to reach accordion layer"
+      - "Expand 'Summary for {variant}' accordion header (item 12 of 15) — data button INJECTED ON EXPAND, not in static HTML"
+      - "Click 'View {variant} Data →' button (dynamically created after accordion expands)"
+      - "Wait for dynamic data table to build (JS generated, not static)"
       - "Extract required fields from data table"
 
   - id: finance_02

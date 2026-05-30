@@ -41,13 +41,12 @@ pub fn render_side_panel(buf: &mut CellBuffer, area: Rect, app: &App) {
         SideTab::Status => render_status_tab_inner(app),
     };
 
-    let mut y = content_area.y;
-    for (text, style) in &lines {
+    for (i, (text, style)) in lines.iter().enumerate() {
+        let y = content_area.y + i as u16;
         if y >= content_area.bottom() {
             break;
         }
         buf.draw_str(content_area.x, y, text, *style);
-        y += 1;
     }
 }
 

@@ -5,17 +5,21 @@ use crate::app::{App, AppModal, ModalLine};
 
 /// `/skills` — list all skills
 /// `/skills <name>` — show skill details
-/// Merged from /skill + /skills (they were redundant).
+/// `/skills search <query>` — search local skills
 pub async fn handle_skills(app: &mut App, args: &str) {
     let args = args.trim();
 
-    // If a name is given, show that skill's details
+    if args.starts_with("search ") || args == "search" {
+        let query = args.strip_prefix("search").unwrap_or("").trim();
+        handle_skills_search(app, query).await;
+        return;
+    }
+
     if !args.is_empty() && args != "list" {
         handle_skill_detail(app, args).await;
         return;
     }
 
-    // No args or "list" — show all skills
     match app.bridge.list_skills().await {
         Ok(skills) => {
             if skills.is_empty() {
@@ -40,7 +44,7 @@ pub async fn handle_skills(app: &mut App, args: &str) {
                 lines.push(ModalLine::muted(format!("    {} [{}]", s.description, cat)));
             }
             lines.push(ModalLine::blank());
-            lines.push(ModalLine::muted("  /skills <name> for details"));
+            lines.push(ModalLine::muted("  /skills <name> for details \u{2502} /skills search <query>"));
             app.active_modal = Some(AppModal::Info {
                 title: "Skills".into(),
                 lines,
@@ -53,6 +57,67 @@ pub async fn handle_skills(app: &mut App, args: &str) {
                 lines: vec![
                     ModalLine::blank(),
                     ModalLine::error(format!("  Failed to load skills: {}", e)),
+                ],
+                scroll: 0,
+            });
+        }
+    }
+}
+
+async fn handle_skills_search(app: &mut App, query: &str) {
+    if query.is_empty() {
+        app.active_modal = Some(AppModal::Info {
+            title: "Skills \u{2014} Search".into(),
+            lines: vec![
+                ModalLine::blank(),
+                ModalLine::muted("  Usage: /skills search <query>"),
+            ],
+            scroll: 0,
+        });
+        return;
+    }
+    match app.bridge.search_skills(query, Some(20)).await {
+        Ok(results) => {
+            if results.is_empty() {
+                app.active_modal = Some(AppModal::Info {
+                    title: format!("Skills \u{2014} Search: {}", query),
+                    lines: vec![
+                        ModalLine::blank(),
+                        ModalLine::muted("  No matches found."),
+                    ],
+                    scroll: 0,
+                });
+                return;
+            }
+            let mut lines = vec![
+                ModalLine::heading(format!("  Results for '{}' ({})", query, results.len())),
+                ModalLine::blank(),
+            ];
+            for r in &results {
+                let cat = r.category.as_deref().unwrap_or("");
+                let source = r.source.as_deref().unwrap_or("");
+                let meta = if source.is_empty() {
+                    cat.to_string()
+                } else if cat.is_empty() {
+                    source.to_string()
+                } else {
+                    format!("{} \u{00b7} {}", cat, source)
+                };
+                lines.push(ModalLine::primary(format!("  {}", r.name)));
+                lines.push(ModalLine::muted(format!("    {} [{}]", r.description, meta)));
+            }
+            app.active_modal = Some(AppModal::Info {
+                title: format!("Skills \u{2014} Search: {}", query),
+                lines,
+                scroll: 0,
+            });
+        }
+        Err(e) => {
+            app.active_modal = Some(AppModal::Info {
+                title: "Skills \u{2014} Search".into(),
+                lines: vec![
+                    ModalLine::blank(),
+                    ModalLine::error(format!("  Search failed: {}", e)),
                 ],
                 scroll: 0,
             });

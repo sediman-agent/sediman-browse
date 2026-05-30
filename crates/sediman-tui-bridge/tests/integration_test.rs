@@ -57,6 +57,11 @@ async fn serve(
                 "hub.browse" => json_response(id, json!([{"name":"hub-skill","description":"From hub","category":"browser","author":"test","version":1,"trust":"community"}])),
                 "hub.search" => json_response(id, json!([{"name":"hub-skill","description":"From hub","category":"browser","author":"test","version":1,"trust":"community"}])),
                 "hub.info" => json_response(id, json!({"name":"test-skill","description":"Hub skill","category":"browser","author":"hub-author","version":1,"trust":"trusted"})),
+                "hub.update_skill" => json_response(id, json!({"updated":true,"message":"Updated to v2"})),
+                "hub.remove" => json_response(id, json!({"removed":"test-skill"})),
+                "hub.check_update" => json_response(id, json!({"hasUpdate":true,"message":"v2 available"})),
+                "hub.publish" => json_response(id, json!({"published":"test-skill","message":"PR created"})),
+                "skills.search" => json_response(id, json!([{"name":"result-1","description":"A result","score":0.95,"category":"browser","source":"hub"}])),
                 "memory.get" => json_response(id, json!({"memory":"facts","user":"prefs","memory_entries":3,"user_entries":2})),
                 "sessions.list" => json_response(id, json!([{"id":1,"task":"test task","created_at":"2024-01-01","result":"ok"}])),
                 "schedule.list" => json_response(id, json!([{"id":"job-1","task":"daily task","cron_expr":"0 9 * * *","enabled":true,"last_run":null,"next_run":"2024-01-02"}])),
@@ -165,4 +170,58 @@ async fn test_hub_info() {
     let client = sediman_tui_bridge::ApiClient::new(&addr);
     let skill = client.hub_info("test-skill").await.unwrap();
     assert_eq!(skill.name, "test-skill");
+}
+
+#[tokio::test]
+async fn test_hub_info_detail() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    let detail = client.hub_info_detail("test-skill").await.unwrap();
+    assert_eq!(detail.name, "test-skill");
+    assert_eq!(detail.author, "hub-author");
+    assert_eq!(detail.trust, "trusted");
+}
+
+#[tokio::test]
+async fn test_hub_update() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    let msg = client.hub_update("test-skill").await.unwrap();
+    assert!(msg.contains("Updated"));
+}
+
+#[tokio::test]
+async fn test_hub_remove() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    client.hub_remove("test-skill").await.unwrap();
+}
+
+#[tokio::test]
+async fn test_hub_check_update() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    let (has_update, msg) = client.hub_check_update("test-skill").await.unwrap();
+    assert!(has_update);
+    assert!(msg.contains("v2"));
+}
+
+#[tokio::test]
+async fn test_hub_publish() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    let msg = client.hub_publish("test-skill").await.unwrap();
+    assert!(msg.contains("PR"));
+}
+
+#[tokio::test]
+async fn test_search_skills() {
+    let (addr, _shutdown) = spawn_test_server().await;
+    let client = sediman_tui_bridge::ApiClient::new(&addr);
+    let results = client.search_skills("test", Some(10)).await.unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "result-1");
+    assert!((results[0].score - 0.95).abs() < f64::EPSILON);
+    assert_eq!(results[0].category.as_deref(), Some("browser"));
+    assert_eq!(results[0].source.as_deref(), Some("hub"));
 }

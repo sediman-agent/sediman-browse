@@ -12,7 +12,7 @@ from sediman.api.app import app, init_state, TaskRequest, ScheduleRequest, HubIn
 
 @pytest.fixture
 def client(tmp_sediman_dir):
-    with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"), \
+    with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"), \
          patch("sediman.scheduler.cron.JOBS_DIR", tmp_sediman_dir / "cron"), \
          patch("sediman.store.db.DEFAULT_DATA_DIR", tmp_sediman_dir), \
          patch("sediman.memory.prompt.MEMORY_FILE", tmp_sediman_dir / "MEMORY.md"), \

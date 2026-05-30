@@ -208,9 +208,10 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
 
     agent = await _get_agent_loop()
 
-    if notify:
-        original_on_step = agent.on_step
+    original_on_step = agent.on_step
+    original_on_streaming = getattr(agent, "on_streaming_text", None)
 
+    if notify:
         def stepping(event: StepEvent) -> None:
             try:
                 notify("chat.progress", {
@@ -224,9 +225,18 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
             if original_on_step:
                 original_on_step(event)
 
+        def on_streaming_token(token: str, phase: str = "responding") -> None:
+            try:
+                notify("chat.streaming", {"token": token, "phase": phase})
+            except Exception:
+                pass
+
         agent.on_step = stepping
+        agent.on_streaming_text = on_streaming_token
 
     InterruptSignal.get().clear()
+
+    start_time = time.monotonic()
 
     try:
         result: AgentResult = await agent.run(task)
@@ -241,8 +251,10 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
             "strategy_used": "cancelled",
         }
     finally:
-        if notify:
-            agent.on_step = original_on_step if notify else agent.on_step
+        agent.on_step = original_on_step
+        agent.on_streaming_text = original_on_streaming
+
+    elapsed_secs = int(time.monotonic() - start_time)
 
     return {
         "task": task,
@@ -255,7 +267,7 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
         "schedule_cron": result.schedule_cron,
         "iterations": result.iterations or 0,
         "strategy_used": result.strategy_used or "direct",
-        "elapsed_secs": 0,
+        "elapsed_secs": elapsed_secs,
     }
 
 
@@ -632,7 +644,7 @@ async def handle_memory_changelog(params: dict[str, Any], notify: NotifyFn | Non
 
 async def handle_sessions_list(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
     from sediman.memory.sessions import get_recent_sessions
-    sessions = get_recent_sessions(limit=50)
+    sessions = await get_recent_sessions(limit=50)
     return [
         {"id": s["id"], "task": s["task"],
          "result": s.get("result", ""), "created_at": s.get("created_at", "")}
@@ -646,7 +658,7 @@ async def handle_sessions_search(params: dict[str, Any], notify: NotifyFn | None
     if not query:
         raise ValueError("query is required")
     limit = int(params.get("limit", 20))
-    results = search_sessions(query, limit=limit)
+    results = await search_sessions(query, limit=limit)
     return {"sessions": results}
 
 
@@ -657,7 +669,7 @@ async def handle_sessions_save(params: dict[str, Any], notify: NotifyFn | None =
         raise ValueError("task is required")
     steps = params.get("steps", [])
     result = params.get("result", "")
-    session_id = save_session(task, steps_json=json.dumps(steps), result=result)
+    session_id = await save_session(task, steps_json=json.dumps(steps), result=result)
     return {"session_id": session_id}
 
 
@@ -666,7 +678,7 @@ async def handle_sessions_get(params: dict[str, Any], notify: NotifyFn | None = 
     session_id = (params.get("session_id") or "").strip()
     if not session_id:
         raise ValueError("session_id is required")
-    session = get_session_by_id(session_id)
+    session = await get_session_by_id(session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
     return session
@@ -793,6 +805,63 @@ async def handle_skills_delete(params: dict[str, Any], notify: NotifyFn | None =
     return {"deleted": name}
 
 
+async def handle_skills_search(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
+    query = (params.get("query") or "").strip()
+    if not query:
+        raise ValueError("query is required")
+    limit = int(params.get("limit", 10))
+    try:
+        from sediman.skills.search import SkillSearchEngine
+        search_engine = SkillSearchEngine()
+        results = search_engine.search(query, limit=limit)
+        return [
+            {
+                "name": r.name,
+                "description": r.description,
+                "score": r.score,
+                "category": getattr(r, "category", None),
+                "source": getattr(r, "source", None),
+            }
+            for r in results
+        ]
+    except Exception:
+        from sediman.skills.engine import SkillEngine
+        engine = SkillEngine()
+        all_skills = engine.list_skills()
+        query_lower = query.lower()
+        matches = [
+            s for s in all_skills
+            if query_lower in s.get("name", "").lower()
+            or query_lower in s.get("description", "").lower()
+        ]
+        return [
+            {
+                "name": s.get("name", ""),
+                "description": s.get("description", ""),
+                "score": 1.0,
+                "category": s.get("category"),
+                "source": None,
+            }
+            for s in matches[:limit]
+        ]
+
+
+async def handle_hub_publish(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.skills.hub import HubClient
+    from sediman.skills.engine import SkillEngine
+    name = (params.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    engine = SkillEngine()
+    skill = engine.read(name)
+    if not skill:
+        raise ValueError(f"Skill '{name}' not found locally")
+    skill_data = skill if isinstance(skill, dict) else (skill.to_dict() if hasattr(skill, "to_dict") else {"name": name})
+    hub = HubClient()
+    result = hub.publish(skill_data)
+    return {"published": name, "message": str(result)}
+
+
 # ── Dispatching ────────────────────────────────────────────────────
 
 NotifyFn = Callable[[str, dict[str, Any]], None]
@@ -809,6 +878,7 @@ HANDLERS: dict[str, Callable] = {
     "skills.get": handle_skills_get,
     "skills.create": handle_skills_create,
     "skills.delete": handle_skills_delete,
+    "skills.search": handle_skills_search,
     "hub.browse": handle_hub_browse,
     "hub.search": handle_hub_search,
     "hub.info": handle_hub_info,
@@ -818,6 +888,7 @@ HANDLERS: dict[str, Callable] = {
     "hub.update_skill": handle_hub_update_skill,
     "hub.remove": handle_hub_remove,
     "hub.get_lock_info": handle_hub_get_lock_info,
+    "hub.publish": handle_hub_publish,
     "memory.get": handle_memory_get,
     "memory.add": handle_memory_add,
     "memory.replace": handle_memory_replace,
@@ -896,6 +967,13 @@ async def handle_connection(
         except Exception:
             pass
 
+    def _sync_notify(method: str, params: dict[str, Any]) -> None:
+        try:
+            msg = (json.dumps({"jsonrpc": "2.0", "method": method, "params": params}) + "\n").encode()
+            writer.write(msg)
+        except Exception:
+            pass
+
     async def read_cancel() -> None:
         """Background task: read additional lines for cancel while agent.run is active."""
         try:
@@ -936,13 +1014,14 @@ async def handle_connection(
             if method == "agent.run":
                 cancel_task = asyncio.create_task(read_cancel())
                 try:
-                    response = await dispatch_request(method, params, req_id, _notify)
+                    response = await dispatch_request(method, params, req_id, _sync_notify)
                 finally:
                     cancel_task.cancel()
                     try:
                         await cancel_task
                     except asyncio.CancelledError:
                         pass
+                await asyncio.sleep(0)
             else:
                 response = await dispatch_request(method, params, req_id, None)
 

@@ -54,7 +54,7 @@ pub fn render_title_bar(buf: &mut CellBuffer, area: Rect, app: &App) {
     buf.draw_str(rx, area.y, &model_label, Style::new().bg(t.background_darker).fg(t.text));
     rx += display_width(&model_label) as u16;
     buf.draw_str(rx, area.y, sep, Style::new().fg(t.border_dim).bg(t.background));
-    rx += display_width(sep) as u16;
+    rx += display_width(sep);
     buf.draw_str(rx, area.y, &status, Style::new().fg(status_color).bg(t.background));
 
     // ── Reconnecting warning ──

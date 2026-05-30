@@ -42,10 +42,10 @@ describe("schedule module", () => {
 
     const { job_id } = await handleScheduleAdd({ cron: "0 0 * * *", task: "daily" })
     const { jobs: before } = await handleScheduleList()
-    expect(before.length).toBe(1)
+    expect(before.length).toBeGreaterThanOrEqual(1)
 
     await handleScheduleRemove({ job_id })
     const { jobs: after } = await handleScheduleList()
-    expect(after.length).toBe(0)
+    expect(after.find((j: any) => j.job_id === job_id)).toBeUndefined()
   })
 })

@@ -67,7 +67,7 @@ class TestDelegateParallel:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, browser_context=None):
             return f"result-{task}"
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):
@@ -81,7 +81,7 @@ class TestDelegateParallel:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, browser_context=None):
             if task == "fail":
                 return "Subagent failed: error"
             return f"ok-{task}"
@@ -133,7 +133,7 @@ class TestDelegateParallel:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, browser_context=None):
             if task == "empty":
                 return None
             return task

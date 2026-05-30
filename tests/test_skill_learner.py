@@ -195,8 +195,8 @@ class TestSkillLearnerAgentConversationContext:
     @pytest.mark.asyncio
     async def test_passes_conversation_to_llm(self, mock_llm, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             mock_llm.chat.return_value = _make_response('{"should_learn": false}')
 
@@ -219,13 +219,13 @@ class TestSkillLearnerAgentConversationContext:
             assert "Conversation history" in user_msg
             assert "Find flights to Tokyo" in user_msg
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_works_without_conversation(self, mock_llm, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             mock_llm.chat.return_value = _make_response('{"should_learn": false}')
 
@@ -238,15 +238,15 @@ class TestSkillLearnerAgentConversationContext:
             )
             assert result is None
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
 
 class TestSkillLearnerAgentVerification:
     @pytest.mark.asyncio
     async def test_evaluation_with_verification(self, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
 
@@ -266,7 +266,7 @@ class TestSkillLearnerAgentVerification:
             read_back = engine.read("verified-skill")
             assert read_back["verification"] == "Page shows confirmation message"
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
 
 class TestSkillLearnerAgentApplyEvaluation:
@@ -274,8 +274,8 @@ class TestSkillLearnerAgentApplyEvaluation:
     async def test_creates_new_skill(self, learner, tmp_path):
         from sediman.skills.engine import SkillEngine
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             evaluation = {
                 "should_learn": True,
@@ -293,13 +293,13 @@ class TestSkillLearnerAgentApplyEvaluation:
             assert read_back is not None
             assert read_back["name"] == "test-skill"
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_does_not_overwrite_existing(self, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -315,13 +315,13 @@ class TestSkillLearnerAgentApplyEvaluation:
             result = await learner._apply_evaluation(evaluation)
             assert result is None
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_rejects_security_threat(self, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             evaluation = {
                 "should_learn": True,
@@ -337,13 +337,13 @@ class TestSkillLearnerAgentApplyEvaluation:
             engine = SkillEngine()
             assert engine.read("dangerous-skill") is None
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_merges_into_similar_skill(self, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -362,13 +362,13 @@ class TestSkillLearnerAgentApplyEvaluation:
             patched = engine.read("google-search")
             assert patched["version"] == 2
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_patches_existing_skill(self, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
         try:
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine()
@@ -387,4 +387,4 @@ class TestSkillLearnerAgentApplyEvaluation:
             read_back = engine.read("patch-skill")
             assert read_back["version"] == 2
         finally:
-            engine_mod.SKILLS_DIR = original
+            engine_mod.GLOBAL_SKILLS_DIR = original

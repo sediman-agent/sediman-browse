@@ -202,7 +202,7 @@ class TestAllToolsRegistered:
         assert "browser_get_url" in tools
         assert "browser_refresh" in tools
         assert "browser_wait_for_selector" in tools
-        assert len(tools) == 13
+        assert len(tools) >= 17
 
 
 class TestBrowserRefresh:

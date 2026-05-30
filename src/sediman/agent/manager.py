@@ -47,14 +47,47 @@ class ManagerAgent:
         if regex_plan is None:
             regex_plan = self._regex_planner.plan(task)
 
-        if regex_plan.schedule and not conversation:
+        has_conversation = bool(conversation)
+        is_fresh_session = conversation is not None and len(conversation) == 0
+
+        if regex_plan.schedule and not has_conversation:
             return ManagerPlan(
                 browser_task="",
                 schedule=regex_plan.schedule,
             )
 
-        if self._is_simple_browser_task(task) and not conversation and not previous_failure:
+        # Fast-path: explicit URL navigation
+        if self._is_explicit_url_task(task) and is_fresh_session and not previous_failure:
             return ManagerPlan(browser_task=task)
+
+        # Fast-path: strongly-matching coding keywords (optimization for common patterns)
+        if self._is_strong_coding_task(task) and is_fresh_session and not previous_failure:
+            return ManagerPlan(
+                browser_task=task,
+                strategy=Strategy.DELEGATE,
+                subtasks=[task],
+                use_subagent="code",
+            )
+
+        # LLM classification: ask the model once to decide browser/code/conversational
+        # Only activate for fresh sessions (empty conversation list explicitly passed)
+        if is_fresh_session and not previous_failure and len(task) < 1000:
+            classification = await self._classify_task(task)
+            if classification == "code":
+                return ManagerPlan(
+                    browser_task=task,
+                    strategy=Strategy.DELEGATE,
+                    subtasks=[task],
+                    use_subagent="code",
+                )
+            elif classification == "browser":
+                return ManagerPlan(browser_task=task)
+            elif classification == "conversational":
+                return ManagerPlan(
+                    browser_task="",
+                    strategy=Strategy.CONVERSATIONAL,
+                    response="I'd be happy to help! What would you like me to do?",
+                )
 
         try:
             if on_streaming_token:
@@ -545,26 +578,90 @@ class ManagerAgent:
             pass
         return None
 
-    def _is_simple_browser_task(self, task: str) -> bool:
-        from sediman.agent.locales import (
-            CHAT_KEYWORDS,
-            SCHEDULE_KEYWORDS,
-            AMBIGUOUS_KEYWORDS,
-            ACTION_VERBS,
-        )
+    def _is_explicit_url_task(self, task: str) -> bool:
+        import re
 
+        if len(task) >= 300:
+            return False
+        task_stripped = task.strip()
+        url_patterns = (
+            r'^(?:go\s+to|open|visit|browse|navigate\s+to)\s+https?://\S+$',
+            r'^https?://\S+$',
+            r'^check\s+https?://\S+',
+        )
+        for pattern in url_patterns:
+            if re.search(pattern, task_stripped, re.IGNORECASE):
+                return True
+        if "http://" in task_stripped or "https://" in task_stripped:
+            from sediman.agent.locales import CHAT_KEYWORDS, SCHEDULE_KEYWORDS
+            task_lower = task_stripped.lower()
+            if not any(kw in task_lower for kw in CHAT_KEYWORDS):
+                if not any(kw in task_lower for kw in SCHEDULE_KEYWORDS):
+                    return True
+        return False
+
+    _STRONG_CODING_KEYWORDS = (
+        "npm install", "pip install", "cargo build", "cargo run",
+        "yarn add", "pnpm add", "bun add", "bun install",
+        "uv pip install", "uv add",
+        "pytest", "jest", "vitest", "mocha",
+        "run the tests", "run tests", "run test suite",
+        "git commit", "git push", "git clone",
+        "create a new project", "initialize a project",
+        "docker build", "docker compose",
+        "run the build", "build the project",
+        "deploy to", "set up ci/cd",
+    )
+
+    def _is_strong_coding_task(self, task: str) -> bool:
         if len(task) >= 500:
             return False
         task_lower = task.lower()
-        if any(kw in task_lower for kw in CHAT_KEYWORDS):
+        return any(kw in task_lower for kw in self._STRONG_CODING_KEYWORDS)
+
+    async def _classify_task(self, task: str) -> str:
+        try:
+            from sediman.agent.coding_agent.prompts import build_classification_prompt
+
+            prompt = build_classification_prompt(task)
+            messages = [
+                {"role": "user", "content": prompt},
+            ]
+            response = await self.llm.chat(messages=messages, tools=[])
+            text = (response.text or "").strip().lower()
+
+            if "code" in text:
+                return "code"
+            elif "browser" in text:
+                return "browser"
+            elif "conversational" in text:
+                return "conversational"
+            else:
+                logger.debug("classify_task_unclear", response=text[:80])
+                return "conversational"
+        except Exception as e:
+            logger.debug("classify_task_failed", error=str(e))
+            return "conversational"
+
+    _CODING_KEYWORDS = (
+        "install", "pip install", "npm install", "cargo", "yarn add",
+        "run test", "run the test", "run tests", "pytest", "jest",
+        "build", "compile", "make", "cargo build",
+        "write a script", "create a file", "edit the file",
+        "fix the code", "fix the bug", "debug",
+        "git commit", "git push", "git pull",
+        "start the server", "run the server", "run the app",
+        "create a project", "initialize", "init a",
+        "set up", "setup", "configure",
+        "execute", "run the command", "run this",
+        "install dep", "update dep", "upgrade dep",
+    )
+
+    def _is_simple_coding_task(self, task: str) -> bool:
+        if len(task) >= 500:
             return False
-        if any(kw in task_lower for kw in SCHEDULE_KEYWORDS):
-            return False
-        if any(kw in task_lower for kw in AMBIGUOUS_KEYWORDS):
-            return False
-        if not any(kw in task_lower for kw in ACTION_VERBS):
-            return False
-        return True
+        task_lower = task.lower()
+        return any(kw in task_lower for kw in self._CODING_KEYWORDS)
 
     def _get_schedule_context(self, task: str) -> str | None:
         try:

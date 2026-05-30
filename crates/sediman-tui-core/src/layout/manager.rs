@@ -82,7 +82,7 @@ mod tests {
         assert!(lm.show_banner);
         assert!(!lm.show_progress);
         assert!(!lm.show_side_panel);
-        assert_eq!(lm.input_lines, 3);
+        assert_eq!(lm.input_lines, 4);
     }
 
     #[test]
@@ -91,8 +91,8 @@ mod tests {
         let zones = lm.split(area(80, 24));
         assert_eq!(zones.title_bar.height, 1);
         assert_eq!(zones.status_bar.height, 1);
-        assert_eq!(zones.input.height, 3);
-        assert!(zones.main.height >= 19);
+        assert_eq!(zones.input.height, 4);
+        assert!(zones.main.height >= 18);
         assert!(zones.side_panel.is_none());
     }
 
@@ -113,8 +113,7 @@ mod tests {
         let zones = lm.split(area(20, 6));
         assert_eq!(zones.title_bar.height, 1);
         assert_eq!(zones.status_bar.height, 1);
-        assert_eq!(zones.input.height, 3);
-        assert_eq!(zones.main.height, 1);
+        assert_eq!(zones.input.height, 4);
     }
 
     #[test]

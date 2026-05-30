@@ -10,6 +10,12 @@ from sediman.skills.format import SkillData
 from sediman.skills.hub import HubClient, HubSkillSummary, DEFAULT_REGISTRY_URL
 
 
+def _make_engine(**kwargs):
+    from sediman.skills.engine import SkillEngine
+    engine = MagicMock(spec=SkillEngine, **kwargs)
+    return engine
+
+
 class TestHubClientInit:
     def test_default_registry(self):
         client = HubClient()
@@ -226,5 +232,70 @@ class TestHubSkillSummary:
         assert s.trust == "community"
         assert s.installs == 0
         assert s.version == 1
-        assert s.author is None
-        assert s.variables is None
+        assert s.author == ""
+        assert s.variables == []
+
+
+class TestHubClientGetSkillLocal:
+    def test_get_skill_local_fallback(self):
+        client = HubClient()
+        with patch.object(client, "_fetch_text", return_value=None):
+            skill = client.get_skill("algorithmic-art")
+            assert skill is not None
+            assert skill.name == "algorithmic-art"
+            assert skill.source == "anthropics/skills"
+
+    def test_get_skill_local_missing(self):
+        client = HubClient()
+        with patch.object(client, "_fetch_text", return_value=None):
+            skill = client.get_skill("zzz-nonexistent-skill-xyz")
+            assert skill is None
+
+    def test_install_local_skill(self):
+        client = HubClient()
+        engine = _make_engine()
+        engine.read.return_value = None
+        engine._skill_path.return_value = Path("/tmp/fake-skill-dir")
+        with patch.object(client, "_fetch_text", return_value=None):
+            ok, msg = client.install("algorithmic-art", engine, force=False)
+            assert ok
+            assert "algorithmic-art" in msg
+
+    def test_install_nonexistent_skill(self):
+        client = HubClient()
+        engine = _make_engine()
+        engine.read.return_value = None
+        with patch.object(client, "_fetch_text", return_value=None):
+            ok, msg = client.install("zzz-nonexistent-skill-xyz", engine, force=False)
+            assert not ok
+            assert "not found" in msg
+
+
+class TestHubClientBrowseLocal:
+    def test_browse_returns_local_skills_when_remote_empty(self):
+        client = HubClient()
+        with patch.object(client, "_fetch_json", return_value=None):
+            results = client.browse()
+            assert len(results) > 0
+            assert all(isinstance(r, HubSkillSummary) for r in results)
+
+    def test_browse_no_null_fields(self):
+        client = HubClient()
+        with patch.object(client, "_fetch_json", return_value=None):
+            results = client.browse()
+            for r in results:
+                assert r.author is not None, f"{r.name} has null author"
+                assert isinstance(r.author, str), f"{r.name} author is not str"
+                assert r.variables is not None, f"{r.name} has null variables"
+                assert isinstance(r.variables, list), f"{r.name} variables is not list"
+                assert r.schedule is not None, f"{r.name} has null schedule"
+                assert isinstance(r.schedule, str), f"{r.name} schedule is not str"
+
+    def test_search_no_null_fields(self):
+        client = HubClient()
+        with patch.object(client, "_fetch_json", return_value=None):
+            results = client.search("art")
+            assert len(results) > 0
+            for r in results:
+                assert isinstance(r.author, str), f"{r.name} author is not str"
+                assert isinstance(r.variables, list), f"{r.name} variables is not list"

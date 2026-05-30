@@ -169,7 +169,7 @@ async def lifespan(application: FastAPI):
             logger.warning("browser_shutdown_failed", error=str(e))
         _browser = None
     if _scheduler:
-        _scheduler.shutdown()
+        _scheduler.stop()
         _scheduler = None
 
 
@@ -197,7 +197,11 @@ def init_state(provider: str = "openai", model: str | None = None, base_url: str
 def _get_llm() -> LLMProvider:
     global _llm
     if _llm is None:
-        _llm = create_provider(**_llm_config)
+        _llm = create_provider(
+            provider=_llm_config["provider"],
+            model=_llm_config.get("model"),
+            base_url=_llm_config.get("base_url"),
+        )
     return _llm
 
 

@@ -11,7 +11,7 @@ from sediman.skills.engine import SkillEngine
 @pytest.fixture
 def engine(tmp_sediman_dir: Path):
     skills_dir = tmp_sediman_dir / "skills"
-    with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+    with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
         yield SkillEngine(skills_dir=skills_dir)
 
 

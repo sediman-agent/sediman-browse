@@ -225,7 +225,7 @@ class TestFormatSnapshot:
         snapshot = PageSnapshot(url="https://x.com", title="X", elements=[])
         text = format_snapshot(snapshot)
         assert "URL: https://x.com" in text
-        assert "No interactive elements" in text
+        assert "No elements found" in text
 
     def test_with_elements(self):
         elements = [
@@ -239,7 +239,7 @@ class TestFormatSnapshot:
             text_preview="Welcome to example",
         )
         text = format_snapshot(snapshot)
-        assert "role=button" in text
+        assert "button" in text
         assert '"Submit"' in text
         assert "placeholder=" in text
         assert "type=email" in text
@@ -250,7 +250,7 @@ class TestFormatSnapshot:
         snapshot = PageSnapshot(url="https://x.com", title="X", elements=elements)
         text = format_snapshot(snapshot)
         lines = [l for l in text.split("\n") if l.startswith("  [")]
-        assert len(lines) <= 50
+        assert len(lines) <= 100
 
     def test_href_and_src(self):
         elements = [

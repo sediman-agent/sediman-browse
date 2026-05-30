@@ -26,7 +26,7 @@ class TestMainGroup:
 
 class TestSkillCommands:
     def test_skill_list_empty(self, runner, tmp_sediman_dir):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             result = runner.invoke(main, ["skill", "list"])
         assert result.exit_code == 0
         assert "No skills found" in result.output
@@ -35,7 +35,7 @@ class TestSkillCommands:
         from sediman.skills.engine import SkillEngine
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="list-test", description="test desc", steps=["s1"])
             result = runner.invoke(main, ["skill", "list"])
@@ -46,7 +46,7 @@ class TestSkillCommands:
         from sediman.skills.engine import SkillEngine
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="show-me", description="visible skill", steps=["step one"])
             result = runner.invoke(main, ["skill", "show", "show-me"])
@@ -56,7 +56,7 @@ class TestSkillCommands:
         assert "1. step one" in result.output
 
     def test_skill_show_missing(self, runner, tmp_sediman_dir):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             result = runner.invoke(main, ["skill", "show", "nonexistent"])
         assert result.exit_code == 1
 
@@ -64,7 +64,7 @@ class TestSkillCommands:
         from sediman.skills.engine import SkillEngine
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="del-me", description="bye", steps=[])
             result = runner.invoke(main, ["skill", "delete", "--yes", "del-me"])
@@ -72,7 +72,7 @@ class TestSkillCommands:
         assert "Deleted" in result.output
 
     def test_skill_delete_missing(self, runner, tmp_sediman_dir):
-        with patch("sediman.skills.engine.SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
             result = runner.invoke(main, ["skill", "delete", "nope"])
         assert result.exit_code == 1
 

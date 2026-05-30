@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from sediman.skills.validator import validate_skill
 logger = structlog.get_logger()
 
 DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/sediman/skills-hub/main"
+
+_LOCAL_INDEX_PATH = Path(__file__).resolve().parent.parent.parent.parent / "skills" / "index.json"
 
 _HUB_CACHE: list[dict[str, Any]] | None = None
 _CACHE_KEY: str = ""
@@ -91,12 +94,12 @@ class HubSkillSummary:
     name: str
     description: str
     category: str
-    author: str | None = None
+    author: str = ""
     version: int = 1
     installs: int = 0
     trust: str = "community"
-    variables: list[str] | None = None
-    schedule: str | None = None
+    variables: list[str] = field(default_factory=list)
+    schedule: str = ""
     source: str = "hub"
 
 
@@ -370,6 +373,18 @@ class HubClient:
             logger.warning("hub_fetch_failed", url=url, error=str(e))
         return None
 
+    def _get_local_index(self) -> list[dict[str, Any]]:
+        if _LOCAL_INDEX_PATH.exists():
+            try:
+                data = json.loads(_LOCAL_INDEX_PATH.read_text())
+                if isinstance(data, dict) and "skills" in data:
+                    return data["skills"]
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        return []
+
     def _get_index(self) -> list[dict[str, Any]]:
         global _HUB_CACHE, _CACHE_TS
 
@@ -377,10 +392,17 @@ class HubClient:
             return _HUB_CACHE
 
         data = self._fetch_json("index.json")
-        if isinstance(data, list):
+        if isinstance(data, list) and data:
             _HUB_CACHE = data
             _CACHE_TS = time.monotonic()
             return data
+
+        local = self._get_local_index()
+        if local:
+            _HUB_CACHE = local
+            _CACHE_TS = time.monotonic()
+            return local
+
         return []
 
     def browse(self, category: str | None = None) -> list[HubSkillSummary]:
@@ -394,13 +416,13 @@ class HubClient:
                     name=entry.get("name", ""),
                     description=entry.get("description", ""),
                     category=entry.get("category", "general"),
-                    author=entry.get("author"),
+                    author=entry.get("author") or "",
                     version=entry.get("version", 1),
                     installs=entry.get("installs", 0),
                     trust=entry.get("trust", "community"),
-                    variables=entry.get("variables"),
-                    schedule=entry.get("schedule"),
-                    source="hub",
+                    variables=entry.get("variables") or [],
+                    schedule=entry.get("schedule") or "",
+                    source=entry.get("source", "hub"),
                 )
             )
         return results
@@ -412,7 +434,8 @@ class HubClient:
         for entry in index:
             searchable = (
                 f"{entry.get('name', '')} {entry.get('description', '')} "
-                f"{entry.get('category', '')}"
+                f"{entry.get('category', '')} {entry.get('source', '')} "
+                f"{' '.join(entry.get('keywords', []))}"
             ).lower()
             if query_lower in searchable:
                 results.append(
@@ -420,47 +443,59 @@ class HubClient:
                         name=entry.get("name", ""),
                         description=entry.get("description", ""),
                         category=entry.get("category", "general"),
-                        author=entry.get("author"),
+                        author=entry.get("author") or "",
                         version=entry.get("version", 1),
                         installs=entry.get("installs", 0),
                         trust=entry.get("trust", "community"),
-                        variables=entry.get("variables"),
-                        schedule=entry.get("schedule"),
-                        source="hub",
+                        variables=entry.get("variables") or [],
+                        schedule=entry.get("schedule") or "",
+                        source=entry.get("source", "hub"),
                     )
                 )
         return results
 
+    def _get_local_skill(self, name: str) -> SkillData | None:
+        index = self._get_index()
+        for entry in index:
+            if entry.get("name") == name:
+                rel_path = entry.get("path", "")
+                if not rel_path:
+                    continue
+                skill_dir = _LOCAL_INDEX_PATH.parent / rel_path
+                skill_json = skill_dir / "skill.json"
+                if skill_json.exists():
+                    from sediman.skills.format import parse_skill_json
+                    parsed = parse_skill_json(skill_json.read_text())
+                    if parsed:
+                        parsed.source = entry.get("source", "local")
+                    return parsed
+                skill_md = skill_dir / "SKILL.md"
+                if skill_md.exists():
+                    from sediman.skills.format import parse_skill_md
+                    parsed = parse_skill_md(skill_md.read_text())
+                    if parsed:
+                        parsed.source = entry.get("source", "local")
+                    return parsed
+        return None
+
     def get_skill(self, name: str) -> SkillData | None:
         skill_json_text = self._fetch_text(f"skills/{name}/skill.json")
-        if not skill_json_text:
-            skill_md_text = self._fetch_text(f"skills/{name}/SKILL.md")
-            if skill_md_text:
-                from sediman.skills.format import parse_skill_md
-
-                parsed = parse_skill_md(skill_md_text)
-                if parsed:
-                    parsed.source = "hub"
+        if skill_json_text:
+            from sediman.skills.format import parse_skill_json
+            parsed = parse_skill_json(skill_json_text)
+            if parsed:
+                parsed.source = "hub"
                 return parsed
-            return None
-
-        from sediman.skills.format import parse_skill_json
-
-        parsed = parse_skill_json(skill_json_text)
-        if parsed:
-            parsed.source = "hub"
-            return parsed
 
         skill_md_text = self._fetch_text(f"skills/{name}/SKILL.md")
         if skill_md_text:
             from sediman.skills.format import parse_skill_md
-
             parsed = parse_skill_md(skill_md_text)
             if parsed:
                 parsed.source = "hub"
                 return parsed
 
-        return None
+        return self._get_local_skill(name)
 
     def install(self, name: str, engine: Any, force: bool = False) -> tuple[bool, str]:
         from sediman.skills.engine import SkillEngine

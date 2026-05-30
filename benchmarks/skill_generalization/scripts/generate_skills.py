@@ -58,7 +58,7 @@ def generate_skill_from_config(task_config: dict) -> dict:
             "Do NOT click any button with 'opacity:0.005' unless it matches the golden path step",
             "Wrong clicks trigger resetProgress() and reset all progress",
             "Only interact with elements inside the currently visible layer div",
-            "The ghost button in cookie grid has empty text but onclick='showLayer(4)'",
+            "The ghost button in cookie grid has empty text, uses addEventListener (no inline onclick) to call showLayer(4)",
             "Accordion headers must be clicked to reveal the data access button",
         ],
         "verification": f"After step 7, a table should be visible with rows containing {', '.join(expected_keys)}",

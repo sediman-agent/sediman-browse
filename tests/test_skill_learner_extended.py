@@ -269,8 +269,8 @@ class TestReviewAndLearnWithRefinement:
         )
 
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
 
         with patch(
             "sediman.agent.prompts.builder._load_template",
@@ -288,13 +288,13 @@ class TestReviewAndLearnWithRefinement:
             )
             assert result is not None
 
-        engine_mod.SKILLS_DIR = original
+        engine_mod.GLOBAL_SKILLS_DIR = original
 
     @pytest.mark.asyncio
     async def test_precheck_similar_with_refinement(self, mock_llm, learner, tmp_path):
         import sediman.skills.engine as engine_mod
-        original = engine_mod.SKILLS_DIR
-        engine_mod.SKILLS_DIR = tmp_path
+        original = engine_mod.GLOBAL_SKILLS_DIR
+        engine_mod.GLOBAL_SKILLS_DIR = tmp_path
 
         from sediman.skills.engine import SkillEngine
         engine = SkillEngine()
@@ -325,4 +325,4 @@ class TestReviewAndLearnWithRefinement:
             patched = engine.read("existing-skill")
             assert patched["version"] == 2
 
-        engine_mod.SKILLS_DIR = original
+        engine_mod.GLOBAL_SKILLS_DIR = original

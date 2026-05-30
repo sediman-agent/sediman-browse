@@ -12,9 +12,122 @@ use crate::styling::Theme;
 
 /// Render a markdown string into styled lines for the cell buffer.
 pub fn render_markdown(text: &str) -> Vec<Line> {
+    let preprocessed = preprocess_latex(text);
     let mut renderer = MarkdownRenderer::new();
-    renderer.render(text);
+    renderer.render(&preprocessed);
     renderer.lines
+}
+
+fn preprocess_latex(text: &str) -> String {
+    let mut result = text.to_string();
+
+    result = replace_display_math(&result);
+    result = replace_inline_math(&result);
+
+    result
+}
+
+fn replace_display_math(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.char_indices().peekable();
+    let bytes = text.as_bytes();
+    let len = text.len();
+
+    let mut last_end = 0;
+
+    while let Some((i, _)) = chars.next() {
+        if i + 1 < len && bytes[i] == b'$' && bytes[i + 1] == b'$' {
+            let marker = i;
+            let _ = chars.next();
+
+            let mut found = false;
+            while let Some(&(j, _)) = chars.peek() {
+                if j + 1 < len && bytes[j] == b'$' && bytes[j + 1] == b'$' {
+                    if last_end < marker {
+                        result.push_str(&text[last_end..marker]);
+                    }
+                    let math_content = &text[marker + 2..j];
+                    result.push_str("§§MATH_D§§");
+                    result.push_str(math_content.trim());
+                    result.push_str("§§/MATH_D§§");
+                    chars.next();
+                    chars.next();
+                    last_end = j + 2;
+                    found = true;
+                    break;
+                }
+                chars.next();
+            }
+            if !found {
+                if last_end < marker {
+                    result.push_str(&text[last_end..marker]);
+                }
+                result.push_str("$$");
+                last_end = marker + 2;
+            }
+        }
+    }
+
+    if last_end < text.len() {
+        result.push_str(&text[last_end..]);
+    }
+
+    result
+}
+
+fn replace_inline_math(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let len = text.len();
+
+    let mut i = 0;
+    let mut last_end = 0;
+
+    while i < len {
+        if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'$' {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'$' && (i == 0 || !bytes[i - 1].is_ascii_alphabetic()) {
+            if i + 1 < len && bytes[i + 1] == b'\\' {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut j = i + 1;
+            let mut found = false;
+            while j < len {
+                if bytes[j] == b'$' && j > start + 1 {
+                    if last_end < start {
+                        result.push_str(&text[last_end..start]);
+                    }
+                    let math_content = &text[start + 1..j];
+                    result.push_str("§§MATH_I§§");
+                    result.push_str(math_content.trim());
+                    result.push_str("§§/MATH_I§§");
+                    last_end = j + 1;
+                    i = j + 1;
+                    found = true;
+                    break;
+                }
+                if bytes[j] == b'\n' {
+                    break;
+                }
+                j += 1;
+            }
+            if !found {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    if last_end < text.len() {
+        result.push_str(&text[last_end..]);
+    }
+
+    result
 }
 
 /// Render a code block with syntax highlighting into styled lines.
@@ -201,7 +314,7 @@ impl MarkdownRenderer {
                                 self.flush_line(&mut current_line_spans);
                             }
                             if !part.is_empty() {
-                                current_line_spans.push(Span::styled(part.to_string(), style));
+                                self.render_text_with_math(&mut current_line_spans, part, style);
                             }
                         }
                     }
@@ -279,6 +392,65 @@ impl MarkdownRenderer {
         }
     }
 
+    fn render_text_with_math(&mut self, spans: &mut Vec<Span>, text: &str, base_style: Style) {
+        let math_style = Style::new()
+            .fg(self.theme.md_emph)
+            .add_modifier(TextAttributes::italic());
+
+        let display_math_style = Style::new()
+            .fg(self.theme.md_strong)
+            .add_modifier(TextAttributes::italic());
+
+        if !text.contains("§§MATH_I§§") && !text.contains("§§MATH_D§§") {
+            spans.push(Span::styled(text.to_string(), base_style));
+            return;
+        }
+
+        let mut remaining = text;
+        while !remaining.is_empty() {
+            let inline_pos = remaining.find("§§MATH_I§§");
+            let display_pos = remaining.find("§§MATH_D§§");
+
+            let (tag_start, tag_open, tag_close, is_display) = match (inline_pos, display_pos) {
+                (Some(i), Some(d)) if i <= d => (i, "§§MATH_I§§", "§§/MATH_I§§", false),
+                (Some(_), Some(d)) => (d, "§§MATH_D§§", "§§/MATH_D§§", true),
+                (Some(i), None) => (i, "§§MATH_I§§", "§§/MATH_I§§", false),
+                (None, Some(d)) => (d, "§§MATH_D§§", "§§/MATH_D§§", true),
+                (None, None) => {
+                    spans.push(Span::styled(remaining.to_string(), base_style));
+                    break;
+                }
+            };
+
+            if tag_start > 0 {
+                spans.push(Span::styled(remaining[..tag_start].to_string(), base_style));
+            }
+
+            let after_open = tag_start + tag_open.len();
+            if let Some(end_pos) = remaining[after_open..].find(tag_close) {
+                let math_content = &remaining[after_open..after_open + end_pos];
+                let style = if is_display { display_math_style } else { math_style };
+
+                if is_display {
+                    self.flush_line(spans);
+                    spans.push(Span::styled(
+                        format!("  {}", math_content),
+                        style,
+                    ));
+                    self.flush_line(spans);
+                } else {
+                    spans.push(Span::styled(math_content.to_string(), style));
+                }
+
+                let after_close = after_open + end_pos + tag_close.len();
+                remaining = &remaining[after_close..];
+            } else {
+                spans.push(Span::styled(remaining.to_string(), base_style));
+                break;
+            }
+        }
+    }
+
     fn render_code_block(&mut self, code: &str, lang: Option<&str>) {
         let inner_width = self.width.saturating_sub(4) as usize;
         let t = &self.theme;
@@ -337,7 +509,7 @@ impl MarkdownRenderer {
 
         use syntect::util::LinesWithEndings;
         for line in LinesWithEndings::from(code) {
-            let ranges = highlighter.highlight_line(line, &ss).unwrap_or_default();
+            let ranges = highlighter.highlight_line(line, ss).unwrap_or_default();
             let mut line_str = String::new();
             for (_style, text) in ranges {
                 let clean = text.trim_end_matches('\n').trim_end_matches('\r');

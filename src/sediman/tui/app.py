@@ -117,7 +117,7 @@ class SedimanTUI:
                 llm_provider=llm,
                 browser_session=browser,
                 on_step=self._on_browser_step,
-                browser_backend=self.browser_backend,
+                on_streaming_text=self._on_streaming_text,
             )
             set_terminal_approval_callback(self._on_terminal_approval)
         return self._agent
@@ -215,6 +215,15 @@ class SedimanTUI:
 
         if len(self._step_log) > 200:
             self._step_log = self._step_log[-200:]
+
+    def _on_streaming_text(self, token: str, phase: str = "responding") -> None:
+        if self._live:
+            style = "\033[36m" if phase == "responding" else "\033[33m"
+            rst = "\033[0m"
+            if not self._step_log or not self._step_log[-1].startswith("  ▶ streaming"):
+                self._step_log.append(f"  {style}▶ streaming:{rst} {token}")
+            else:
+                self._step_log[-1] += token
 
     # ── entry point ────────────────────────────────────────────────
 

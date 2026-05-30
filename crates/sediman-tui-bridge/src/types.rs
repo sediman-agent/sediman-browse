@@ -267,12 +267,80 @@ mod tests {
     }
 
     #[test]
+    fn test_hub_skill_null_string_fields() {
+        let json = r#"{"name":"x","description":"d","category":null,"author":null,"version":0,"trust":null}"#;
+        let s: HubSkill = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "x");
+        assert_eq!(s.category, "");
+        assert_eq!(s.author, "");
+        assert_eq!(s.trust, "");
+    }
+
+    #[test]
+    fn test_hub_skill_all_null_strings() {
+        let json = r#"{"name":null,"description":null,"category":null,"author":null,"trust":null}"#;
+        let s: HubSkill = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "");
+        assert_eq!(s.description, "");
+        assert_eq!(s.category, "");
+        assert_eq!(s.author, "");
+        assert_eq!(s.trust, "");
+    }
+
+    #[test]
+    fn test_hub_skill_missing_fields() {
+        let json = r#"{}"#;
+        let s: HubSkill = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "");
+        assert_eq!(s.version, 0);
+    }
+
+    #[test]
+    fn test_hub_skill_detail_null_strings() {
+        let json = r#"{"name":null,"description":null,"category":null,"author":null,"trust":null}"#;
+        let s: HubSkillDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "");
+        assert_eq!(s.description, "");
+        assert_eq!(s.category, "");
+        assert_eq!(s.author, "");
+        assert_eq!(s.trust, "");
+    }
+
+    #[test]
+    fn test_skill_search_result_null_strings() {
+        let json = r#"{"name":null,"description":null,"score":0.5}"#;
+        let s: SkillSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "");
+        assert_eq!(s.description, "");
+        assert_eq!(s.score, 0.5);
+    }
+
+    #[test]
     fn test_ws_message_with_data() {
         let json = r#"{"type":"step","data":{"phase":"executing","action":"click"}}"#;
         let msg: WsMessage = serde_json::from_str(json).unwrap();
         assert_eq!(msg.msg_type, "step");
         assert!(msg.data.is_some());
         assert!(msg.event.is_none());
+    }
+
+    #[test]
+    fn test_ws_message_streaming() {
+        let json = r#"{"type":"streaming","streaming_token":{"token":"hello","phase":"responding"}}"#;
+        let msg: WsMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.msg_type, "streaming");
+        let st = msg.streaming_token.unwrap();
+        assert_eq!(st.token, "hello");
+        assert_eq!(st.phase, "responding");
+    }
+
+    #[test]
+    fn test_ws_message_streaming_default_phase() {
+        let json = r#"{"type":"streaming","streaming_token":{"token":"world"}}"#;
+        let msg: WsMessage = serde_json::from_str(json).unwrap();
+        let st = msg.streaming_token.unwrap();
+        assert_eq!(st.token, "world");
+        assert_eq!(st.phase, "responding");
     }
 
     #[test]
@@ -351,9 +419,141 @@ mod tests {
         assert_eq!(restored.action_type.unwrap(), "click");
         assert!(restored.text.is_none());
     }
+
+    #[test]
+    fn test_hub_skill_detail_roundtrip() {
+        let orig = HubSkillDetail {
+            name: "detail-skill".into(),
+            description: "A detailed skill".into(),
+            category: "browser".into(),
+            author: "test-author".into(),
+            version: 3,
+            trust: "trusted".into(),
+            steps: vec![SkillStep {
+                description: "Navigate to page".into(),
+                action_type: Some("navigate".into()),
+                url: Some("https://example.com".into()),
+                selector: None,
+                text: None,
+            }],
+            variables: vec![SkillVariable {
+                name: "query".into(),
+                description: "Search query".into(),
+                default: Some("test".into()),
+            }],
+            warnings: vec!["May fail on slow connections".into()],
+            license: Some("MIT".into()),
+            schedule: Some("0 9 * * *".into()),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: HubSkillDetail = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "detail-skill");
+        assert_eq!(restored.version, 3);
+        assert_eq!(restored.steps.len(), 1);
+        assert_eq!(restored.variables.len(), 1);
+        assert_eq!(restored.warnings.len(), 1);
+        assert_eq!(restored.license.unwrap(), "MIT");
+        assert_eq!(restored.schedule.unwrap(), "0 9 * * *");
+    }
+
+    #[test]
+    fn test_hub_skill_detail_minimal() {
+        let json = r#"{"name":"x","description":"d"}"#;
+        let detail: HubSkillDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(detail.name, "x");
+        assert!(detail.steps.is_empty());
+        assert!(detail.variables.is_empty());
+        assert!(detail.warnings.is_empty());
+        assert!(detail.license.is_none());
+        assert!(detail.schedule.is_none());
+    }
+
+    #[test]
+    fn test_hub_skill_detail_from_hub_info_response() {
+        let json = r#"{
+            "name":"stock-checker",
+            "description":"Check stock prices",
+            "category":"finance",
+            "author":"community",
+            "version":2,
+            "trust":"community",
+            "steps":[{"description":"Go to Yahoo Finance","action_type":"navigate","url":"https://finance.yahoo.com"}],
+            "variables":[{"name":"ticker","description":"Stock ticker symbol","default":"AAPL"}],
+            "warnings":["Rate limited to 5 req/min"],
+            "license":"Apache-2.0",
+            "schedule":"0 */4 * * *"
+        }"#;
+        let detail: HubSkillDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(detail.steps[0].action_type.as_deref(), Some("navigate"));
+        assert_eq!(detail.variables[0].name, "ticker");
+        assert_eq!(detail.warnings[0], "Rate limited to 5 req/min");
+    }
+
+    #[test]
+    fn test_skill_search_result_roundtrip() {
+        let orig = SkillSearchResult {
+            name: "search-skill".into(),
+            description: "Searches things".into(),
+            score: 0.95,
+            category: Some("search".into()),
+            source: Some("hub".into()),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let restored: SkillSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "search-skill");
+        assert!((restored.score - 0.95).abs() < f64::EPSILON);
+        assert_eq!(restored.category.unwrap(), "search");
+        assert_eq!(restored.source.unwrap(), "hub");
+    }
+
+    #[test]
+    fn test_skill_search_result_minimal() {
+        let json = r#"{"name":"x","description":"d","score":0.5}"#;
+        let r: SkillSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(r.name, "x");
+        assert!(r.category.is_none());
+        assert!(r.source.is_none());
+    }
+
+    #[test]
+    fn test_hub_skill_default_fields() {
+        let json = r#"{"name":"s","description":"d"}"#;
+        let s: HubSkill = serde_json::from_str(json).unwrap();
+        assert_eq!(s.name, "s");
+        assert!(s.category.is_empty());
+        assert!(s.author.is_empty());
+        assert_eq!(s.version, 0);
+        assert!(s.trust.is_empty());
+    }
+
+    #[test]
+    fn test_session_info_null_fields() {
+        let json = r#"{"id":1,"task":null,"created_at":null}"#;
+        let s: SessionInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(s.id, 1);
+        assert_eq!(s.task, "");
+        assert_eq!(s.created_at, "");
+        assert!(s.result.is_none());
+    }
+
+    #[test]
+    fn test_session_info_missing_fields() {
+        let json = r#"{"id":5}"#;
+        let s: SessionInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(s.id, 5);
+        assert_eq!(s.task, "");
+    }
 }
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn null_to_default<'de, D, T>(de: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(de).map(|v| v.unwrap_or_default())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepEvent {
@@ -434,19 +634,69 @@ pub struct CronJob {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubSkill {
+    #[serde(default, deserialize_with = "null_to_default")]
     pub name: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub description: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub category: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub author: String,
+    #[serde(default)]
     pub version: i32,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub trust: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubSkillDetail {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub name: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub description: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub category: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub author: String,
+    #[serde(default)]
+    pub version: i32,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub trust: String,
+    #[serde(default)]
+    pub steps: Vec<SkillStep>,
+    #[serde(default)]
+    pub variables: Vec<SkillVariable>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub schedule: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSearchResult {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub name: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub description: String,
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
+    #[serde(default)]
     pub id: i64,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub task: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub created_at: String,
+    #[serde(default)]
     pub result: Option<String>,
 }
 
@@ -474,4 +724,16 @@ pub struct WsMessage {
     pub event: Option<StepEvent>,
     pub result: Option<AgentResult>,
     pub error: Option<String>,
+    pub streaming_token: Option<StreamingToken>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingToken {
+    pub token: String,
+    #[serde(default = "default_phase")]
+    pub phase: String,
+}
+
+fn default_phase() -> String {
+    "responding".to_string()
 }

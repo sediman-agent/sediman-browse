@@ -12,4 +12,5 @@ pub enum AppEvent {
     AgentError(String),
     AgentDone,
     CommandOutput(String),
+    StreamingToken(String, String),
 }

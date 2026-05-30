@@ -193,6 +193,60 @@ impl ApiClient {
             .await
     }
 
+    pub async fn hub_info_detail(&self, name: &str) -> BridgeResult<HubSkillDetail> {
+        self.call("hub.info", serde_json::json!({"name": name}))
+            .await
+    }
+
+    pub async fn hub_update(&self, name: &str) -> BridgeResult<String> {
+        let resp: serde_json::Value = self
+            .call(
+                "hub.update_skill",
+                serde_json::json!({"name": name}),
+            )
+            .await?;
+        Ok(resp["message"].as_str().unwrap_or("Updated").to_string())
+    }
+
+    pub async fn hub_remove(&self, name: &str) -> BridgeResult<()> {
+        self.call::<serde_json::Value>(
+            "hub.remove",
+            serde_json::json!({"name": name}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn hub_check_update(&self, name: &str) -> BridgeResult<(bool, String)> {
+        let resp: serde_json::Value = self
+            .call(
+                "hub.check_update",
+                serde_json::json!({"name": name}),
+            )
+            .await?;
+        let has_update = resp["hasUpdate"].as_bool().unwrap_or(false);
+        let message = resp["message"].as_str().unwrap_or("").to_string();
+        Ok((has_update, message))
+    }
+
+    pub async fn hub_publish(&self, name: &str) -> BridgeResult<String> {
+        let resp: serde_json::Value = self
+            .call(
+                "hub.publish",
+                serde_json::json!({"name": name}),
+            )
+            .await?;
+        Ok(resp["message"].as_str().unwrap_or("Published").to_string())
+    }
+
+    pub async fn search_skills(&self, query: &str, limit: Option<usize>) -> BridgeResult<Vec<SkillSearchResult>> {
+        let mut params = serde_json::json!({"query": query});
+        if let Some(l) = limit {
+            params["limit"] = serde_json::json!(l);
+        }
+        self.call("skills.search", params).await
+    }
+
     pub async fn list_schedules(&self) -> BridgeResult<Vec<CronJob>> {
         self.call("schedule.list", serde_json::json!({})).await
     }

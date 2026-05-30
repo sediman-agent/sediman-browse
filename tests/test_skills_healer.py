@@ -22,7 +22,7 @@ class TestHealSkill:
         ))
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="broken-skill", description="test", steps=["old step"])
@@ -85,7 +85,7 @@ class TestHealSkill:
         llm.chat = AsyncMock(return_value=LLMResponse(text=response_with_code_block))
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="code-block-skill", description="test", steps=["old"])
@@ -107,7 +107,7 @@ class TestHealSkill:
         llm.chat = AsyncMock(return_value=LLMResponse(text=response))
 
         skills_dir = tmp_sediman_dir / "skills"
-        with patch("sediman.skills.engine.SKILLS_DIR", skills_dir):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", skills_dir):
             from sediman.skills.engine import SkillEngine
             engine = SkillEngine(skills_dir=skills_dir)
             engine.create(name="plain-code", description="test", steps=["old"])

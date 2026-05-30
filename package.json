@@ -12,6 +12,8 @@
     "tui": "cargo run -p sediman-tui --",
     "python": "uv run python -m sediman.rpc_server",
     "fullstack": "bash scripts/sediman.sh",
-    "rpc": "cd packages/server && bun run rpc"
+    "rpc": "cd packages/server && bun run rpc",
+    "stop": "kill $(pgrep -f 'sediman.rpc_server') 2>/dev/null; kill $(pgrep -f 'sediman-tui') 2>/dev/null; rm -f /tmp/sediman-python.sock /tmp/sediman.sock; echo 'Stopped.'",
+    "restart": "bun run stop && sleep 1 && bun run tui"
   }
 }

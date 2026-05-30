@@ -180,6 +180,7 @@ class AgentLoop:
                 tool_registry=self._get_tool_registry(),
                 on_step=self.on_step,
                 flash_mode=self.flash_mode,
+                on_streaming_text=self.on_streaming_text,
             )
             from sediman.agent.tools import set_subagent_factory
             set_subagent_factory(self._subagent_factory)
@@ -308,14 +309,6 @@ class AgentLoop:
 
         # Emit streaming plan reasoning if on_step is wired
         def on_plan_token(token: str) -> None:
-            if self.on_step:
-                self.on_step(StepEvent(
-                    step=0,
-                    action=f"Planning: {token[:60]}",
-                    observation="",
-                    phase="planning",
-                    detail=token[:100],
-                ))
             self._stream_text(token, phase="planning")
 
         plan = await self._manager.plan(
@@ -359,7 +352,7 @@ class AgentLoop:
             if not response_text:
                 response_text = "I'm Sediman. How can I help you?"
             else:
-                self._stream_text(response_text, phase="responding")
+                await self._stream_text_async(response_text, phase="responding")
             self._conversation.append({"role": "user", "content": task})
             self._conversation.append({"role": "assistant", "content": response_text})
             if len(self._conversation) > self.max_conversation:
@@ -504,7 +497,7 @@ class AgentLoop:
                 state.advance_step()
 
         # ── Phase 5: Final Assembly ─────────────────────────────
-        state = self._assemble_result(state, plan)
+        state = await self._assemble_result(state, plan)
         state.phase = AgentPhase.DONE
 
         # ── Phase 6: Post-task orchestration ────────────────────
@@ -679,7 +672,7 @@ class AgentLoop:
         state.actions_taken.extend(browser_result.actions)
         self._emit(state, f"Completed {len(browser_result.actions)} browser actions")
         if browser_result.text:
-            self._stream_text(browser_result.text[:500], phase="executing")
+            await self._stream_text_async(browser_result.text[:500], phase="executing")
 
     async def _try_tool_loop_execution(
         self, state: AgentState, step: PlanStep,
@@ -1200,7 +1193,7 @@ class AgentLoop:
 
         AuditLog.get().record("replan", "new_plan", f"strategy={plan.strategy.value}", steps=len(new_steps_state.plan_steps))
 
-    def _assemble_result(self, state: AgentState, plan: ManagerPlan) -> AgentState:
+    async def _assemble_result(self, state: AgentState, plan: ManagerPlan) -> AgentState:
         completed = state.completed_steps
         if completed:
             results = []
@@ -1218,7 +1211,7 @@ class AgentLoop:
         if state.errors:
             state.result += f"\n\n[Encountered {len(state.errors)} error(s) during execution]"
 
-        self._stream_text(state.result, phase="result")
+        await self._stream_text_async(state.result, phase="result")
 
         self._conversation.append({"role": "user", "content": state.task})
         self._conversation.append({"role": "assistant", "content": state.result})
@@ -1460,11 +1453,34 @@ class AgentLoop:
             ))
 
     def _stream_text(self, token: str, phase: str = "responding") -> None:
-        if self.on_streaming_text:
-            try:
+        if not self.on_streaming_text:
+            return
+        if not token:
+            return
+        try:
+            if len(token) <= 4:
                 self.on_streaming_text(token, phase)
+            else:
+                for i in range(0, len(token), 3):
+                    self.on_streaming_text(token[i:i + 3], phase)
+        except Exception:
+            pass
+
+    async def _stream_text_async(self, text: str, phase: str = "responding") -> None:
+        """Stream text token-by-token for smooth TUI rendering."""
+        import asyncio
+
+        if not self.on_streaming_text or not text:
+            return
+        chunk_size = 3
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i + chunk_size]
+            try:
+                self.on_streaming_text(chunk, phase)
             except Exception:
                 pass
+            if i > 0 and i % 60 == 0:
+                await asyncio.sleep(0)
 
     def _build_step_events(self, state: AgentState) -> list[StepEvent]:
         events = []

@@ -32,6 +32,7 @@ pub enum AppModal {
     ProviderPicker,
     MemoryEditor,
     SoulEditor,
+    SkillBrowser,
     Info {
         title: String,
         lines: Vec<ModalLine>,
@@ -72,6 +73,7 @@ impl ModalLine {
 pub struct App {
     pub provider: String,
     pub model: Option<String>,
+    #[allow(dead_code)]
     pub base_url: Option<String>,
     pub headless: bool,
     pub bridge: ApiClient,
@@ -100,6 +102,8 @@ pub struct App {
     pub show_banner: bool,
     pub show_side_panel: bool,
     pub side_panel_tab: SideTab,
+    pub streaming_text: String,
+    pub streaming_phase: String,
 
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
@@ -125,6 +129,13 @@ pub struct App {
     pub memory_editor_index: usize,
     // Soul editor state
     pub soul_editor_input: String,
+    // Skill browser state
+    pub skill_browser_skills: Vec<sediman_tui_bridge::HubSkill>,
+    pub skill_browser_selected: usize,
+    pub skill_browser_filter: String,
+    pub skill_browser_installed: Vec<String>,
+    pub skill_browser_scroll: u16,
+    pub skill_browser_visible_rows: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +210,8 @@ impl App {
             show_banner: true,
             show_side_panel: false,
             side_panel_tab: SideTab::Status,
+            streaming_text: String::new(),
+            streaming_phase: String::new(),
 
             messages: Vec::new(),
             scroll_offset: 0,
@@ -221,6 +234,12 @@ impl App {
             memory_editor_input: String::new(),
             memory_editor_index: 0,
             soul_editor_input: String::new(),
+            skill_browser_skills: Vec::new(),
+            skill_browser_selected: 0,
+            skill_browser_filter: String::new(),
+            skill_browser_installed: Vec::new(),
+            skill_browser_scroll: 0,
+            skill_browser_visible_rows: 15,
         }
     }
 
@@ -250,6 +269,7 @@ impl App {
     pub fn start_agent_message(&mut self, task: &str) {
         self.step_log.clear();
         self.step_log.push(format!("Task: {}", task));
+        self.streaming_text.clear();
         self.messages.push(ChatMessage::Agent {
             steps: Vec::new(),
             result: None,
@@ -293,6 +313,16 @@ impl App {
             *sj = scheduled_job;
         }
         self.agent_running = false;
+        self.streaming_text.clear();
+        self.streaming_phase.clear();
+        self.auto_scroll = true;
+    }
+
+    pub fn append_streaming_token(&mut self, token: &str, phase: &str) {
+        self.streaming_text.push_str(token);
+        if !phase.is_empty() {
+            self.streaming_phase = phase.to_string();
+        }
         self.auto_scroll = true;
     }
 
@@ -355,13 +385,16 @@ pub async fn run(
         tokio::select! {
             Some(event) = event_rx.recv() => {
                 handle_message(&mut app, event, &event_tx).await;
+                while let Ok(next) = event_rx.try_recv() {
+                    handle_message(&mut app, next, &event_tx).await;
+                }
             }
             _ = tokio::time::sleep(Duration::from_millis(FRAME_INTERVAL_MS)) => {
                 tick_counter += 1;
-                if app.agent_running && tick_counter % 3 == 0 {
+                if app.agent_running && tick_counter.is_multiple_of(3) {
                     app.advance_spinner();
                 }
-                if tick_counter % HEALTH_CHECK_INTERVAL_TICKS == 0 {
+                if tick_counter.is_multiple_of(HEALTH_CHECK_INTERVAL_TICKS) {
                     let was_connected = app.is_connected;
                     app.is_connected = app.bridge.is_connected().await;
                     if was_connected && !app.is_connected {
@@ -561,6 +594,22 @@ mod tests {
         assert_eq!(app.step_log.len(), 1);
         assert!(app.step_log[0].contains("Task: test task"));
         assert!(!app.step_log.iter().any(|s| s == "old step"));
+    }
+
+    #[test]
+    fn test_skill_browser_state_defaults() {
+        let app = test_app();
+        assert!(app.skill_browser_skills.is_empty());
+        assert_eq!(app.skill_browser_selected, 0);
+        assert!(app.skill_browser_filter.is_empty());
+        assert!(app.skill_browser_installed.is_empty());
+        assert_eq!(app.skill_browser_scroll, 0);
+    }
+
+    #[test]
+    fn test_modal_skill_browser_variant() {
+        let modal = AppModal::SkillBrowser;
+        assert!(matches!(modal, AppModal::SkillBrowser));
     }
 
     #[test]

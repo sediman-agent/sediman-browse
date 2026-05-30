@@ -209,7 +209,7 @@ impl TextEditor {
                 } else {
                     buf.put_char(cx, y, c, text_style);
                 }
-                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as usize;
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1);
                 line_len += w;
                 cx += w as u16;
                 char_idx += 1;
@@ -301,7 +301,7 @@ impl TextEditor {
                 } else {
                     buf.put_char(cx, y, c, text_style);
                 }
-                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as usize;
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1);
                 line_len += w;
                 cx += w as u16;
                 char_idx += 1;

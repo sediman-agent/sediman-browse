@@ -31,6 +31,7 @@ class SubagentFactory:
         on_step: Callable[[str, str], None] | None = None,
         flash_mode: bool = True,
         max_nested_depth: int = MAX_NESTED_DEPTH,
+        on_streaming_text: Callable[[str, str], None] | None = None,
     ):
         self.registry = registry
         self.llm = llm_provider
@@ -40,6 +41,7 @@ class SubagentFactory:
         self.flash_mode = flash_mode
         self.max_nested_depth = max_nested_depth
         self._scratchpad = SharedScratchpad()
+        self._on_streaming_text = on_streaming_text
 
     @property
     def scratchpad(self) -> SharedScratchpad:
@@ -119,6 +121,7 @@ class SubagentFactory:
             on_step=self.on_step,
             flash_mode=self.flash_mode,
             scratchpad=self._scratchpad,
+            on_streaming_text=self._on_streaming_text,
         )
 
         try:
