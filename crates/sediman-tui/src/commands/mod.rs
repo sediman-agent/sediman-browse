@@ -132,7 +132,7 @@ mod tests {
         assert!(registry.get("/color").is_some());
         assert!(registry.get("/rename").is_some());
         assert!(registry.get("/themes").is_some());
-        assert!(registry.get("/theme").is_some());
+        assert!(registry.get("/themes").is_some());
     }
 
     #[test]

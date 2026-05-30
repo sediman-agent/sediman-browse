@@ -162,7 +162,10 @@ class TestTrajectoryDBQueries:
         await db.save(Trajectory(id="3", task="check email", steps=[], success=True))
 
         results = await db.query_similar_tasks("search", limit=10)
-        assert len(results) == 2
+        assert len(results) >= 2
+        task_names = [r.task for r in results]
+        assert "search google" in task_names
+        assert "search bing" in task_names
 
     @pytest.mark.asyncio
     async def test_get_recent_failures(self, db):

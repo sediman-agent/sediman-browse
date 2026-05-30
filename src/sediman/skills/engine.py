@@ -181,6 +181,9 @@ class SkillEngine:
     def get_skill(self, name: str) -> dict[str, Any] | None:
         return self.read(name)
 
+    def list_skills_full(self) -> list[dict[str, Any]]:
+        return self.list_skills()
+
     def list_skills(self) -> list[dict[str, Any]]:
         self._invalidate_cache_if_stale()
 
@@ -279,6 +282,11 @@ class SkillEngine:
         shutil.rmtree(skill_dir)
         self._list_cache = None
         self._read_cache.pop(name, None)
+        try:
+            from sediman.skills.hub import SkillLockFile
+            SkillLockFile().remove(name)
+        except Exception:
+            pass
         return True
 
     def patch(self, name: str, updates: dict[str, Any]) -> dict[str, Any] | None:

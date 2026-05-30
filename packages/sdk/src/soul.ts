@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs"
-import { dirname } from "path"
-import { SOUL_FILE } from "./config.js"
+import { dirname, join } from "path"
+import { getDataDir } from "./config.js"
+
+function soulFile(): string { return join(getDataDir(), "SOUL.md") }
 
 const DEFAULT_SOUL = `You are Sediman, a self-improving browser automation agent.
 
@@ -15,8 +17,8 @@ Communication style:
 
 export function loadSoul(): string {
   try {
-    if (existsSync(SOUL_FILE)) {
-      return readFileSync(SOUL_FILE, "utf-8")
+    if (existsSync(soulFile())) {
+      return readFileSync(soulFile(), "utf-8")
     }
   } catch {
     // fall through to default
@@ -25,14 +27,14 @@ export function loadSoul(): string {
 }
 
 export function saveSoul(content: string): void {
-  mkdirSync(dirname(SOUL_FILE), { recursive: true })
-  writeFileSync(SOUL_FILE, content, "utf-8")
+  mkdirSync(dirname(soulFile()), { recursive: true })
+  writeFileSync(soulFile(), content, "utf-8")
 }
 
 export function resetSoul(): void {
   try {
-    if (existsSync(SOUL_FILE)) {
-      unlinkSync(SOUL_FILE)
+    if (existsSync(soulFile())) {
+      unlinkSync(soulFile())
     }
   } catch {
     // ignore

@@ -1,43 +1,168 @@
-//! OpenCode-inspired theme with exact color palette from opencode.go.
-//!
-//! Uses truecolor (24-bit RGB) for precise color matching.
-//! Terminals must support COLORTERM=truecolor for full fidelity.
-
 use crate::renderer::{Color, Style};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ThemeColors {
+    pub primary: String,
+    pub secondary: String,
+    pub accent: String,
+    pub error: String,
+    pub warning: String,
+    pub success: String,
+    pub info: String,
+    pub text: String,
+    pub text_muted: String,
+    pub text_emphasized: String,
+    pub background: String,
+    pub background_panel: String,
+    pub background_darker: String,
+}
+
+impl Default for ThemeColors {
+    fn default() -> Self {
+        Self {
+            primary: "#fab283".into(),
+            secondary: "#5c9cf5".into(),
+            accent: "#9d7cd8".into(),
+            error: "#e06c75".into(),
+            warning: "#f5a742".into(),
+            success: "#7fd88f".into(),
+            info: "#56b6c2".into(),
+            text: "#e0e0e0".into(),
+            text_muted: "#6a6a6a".into(),
+            text_emphasized: "#e5c07b".into(),
+            background: "#212121".into(),
+            background_panel: "#252525".into(),
+            background_darker: "#121212".into(),
+        }
+    }
+}
+
+impl ThemeColors {
+    pub fn to_theme(&self) -> Theme {
+        let resolve = |hex: &str| parse_hex(hex).unwrap_or_else(|| Color::from_rgb(0xff, 0xff, 0xff));
+
+        let primary = resolve(&self.primary);
+        let secondary = resolve(&self.secondary);
+        let accent = resolve(&self.accent);
+        let error = resolve(&self.error);
+        let warning = resolve(&self.warning);
+        let success = resolve(&self.success);
+        let info = resolve(&self.info);
+        let text = resolve(&self.text);
+        let text_muted = resolve(&self.text_muted);
+        let text_emphasized = resolve(&self.text_emphasized);
+        let background = resolve(&self.background);
+        let bg_panel = resolve(&self.background_panel);
+        let bg_darker = resolve(&self.background_darker);
+
+        let (br, bg_, bb) = background.to_rgb();
+        let border = Color::from_rgb(
+            br.saturating_add(40),
+            bg_.saturating_add(40),
+            bb.saturating_add(40),
+        );
+        let border_dim = Color::from_rgb(
+            br.saturating_add(15),
+            bg_.saturating_add(15),
+            bb.saturating_add(15),
+        );
+
+        Theme {
+            primary,
+            secondary,
+            accent,
+            error,
+            warning,
+            success,
+            info,
+            text,
+            text_muted,
+            text_emphasized,
+            background,
+            background_panel: bg_panel,
+            background_darker: bg_darker,
+            border,
+            border_focused: primary,
+            border_dim,
+            user_message: secondary,
+            agent_message: primary,
+            md_text: text,
+            md_heading: secondary,
+            md_link: primary,
+            md_link_text: info,
+            md_code: success,
+            md_blockquote: text_emphasized,
+            md_emph: text_emphasized,
+            md_strong: accent,
+            md_horizontal_rule: text_muted,
+            md_list_item: primary,
+            md_list_enum: info,
+            md_code_block: text,
+            syntax_comment: text_muted,
+            syntax_keyword: secondary,
+            syntax_function: primary,
+            syntax_variable: error,
+            syntax_string: success,
+            syntax_number: accent,
+            syntax_type: text_emphasized,
+            syntax_operator: info,
+            syntax_punctuation: text,
+        }
+    }
+
+    pub fn from_theme(theme: &Theme) -> Self {
+        fn hex(c: Color) -> String {
+            let (r, g, b) = c.to_rgb();
+            format!("#{:02x}{:02x}{:02x}", r, g, b)
+        }
+        Self {
+            primary: hex(theme.primary),
+            secondary: hex(theme.secondary),
+            accent: hex(theme.accent),
+            error: hex(theme.error),
+            warning: hex(theme.warning),
+            success: hex(theme.success),
+            info: hex(theme.info),
+            text: hex(theme.text),
+            text_muted: hex(theme.text_muted),
+            text_emphasized: hex(theme.text_emphasized),
+            background: hex(theme.background),
+            background_panel: hex(theme.background_panel),
+            background_darker: hex(theme.background_darker),
+        }
+    }
+}
+
+pub fn parse_hex(s: &str) -> Option<Color> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 { return None; }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some(Color::from_rgb(r, g, b))
+}
 
 #[derive(Clone, Debug)]
 pub struct Theme {
-    // Base colors
     pub primary: Color,
     pub secondary: Color,
     pub accent: Color,
-
-    // Status colors
     pub error: Color,
     pub warning: Color,
     pub success: Color,
     pub info: Color,
-
-    // Text colors
     pub text: Color,
     pub text_muted: Color,
     pub text_emphasized: Color,
-
-    // Background colors
     pub background: Color,
     pub background_panel: Color,
     pub background_darker: Color,
-
-    // Border colors
     pub border: Color,
     pub border_focused: Color,
     pub border_dim: Color,
-
-    // Message-specific colors
     pub user_message: Color,
     pub agent_message: Color,
-
-    // Markdown colors (OpenCode's exact mapping)
     pub md_text: Color,
     pub md_heading: Color,
     pub md_link: Color,
@@ -50,8 +175,6 @@ pub struct Theme {
     pub md_list_item: Color,
     pub md_list_enum: Color,
     pub md_code_block: Color,
-
-    // Syntax highlighting colors
     pub syntax_comment: Color,
     pub syntax_keyword: Color,
     pub syntax_function: Color,
@@ -65,130 +188,28 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        // ─── OpenCode's exact "opencode" theme palette (dark mode) ───
-        // Source: github.com/opencode-ai/opencode/internal/tui/theme/opencode.go
-        //
-        // Core palette:
-        //   Background:  #212121    Primary:    #fab283 (warm orange/gold)
-        //   Foreground:  #e0e0e0    Secondary:  #5c9cf5 (soft blue)
-        //   Comment:     #6a6a6a    Accent:     #9d7cd8 (purple)
-        //   Border:      #4b4c5c    Red:        #e06c75
-        //   Green:       #7fd88f    Cyan:       #56b6c2
-        //   Orange:      #f5a742    Yellow:     #e5c07b
-
-        let primary       = Color::from_rgb(0xfa, 0xb2, 0x83); // warm orange/gold
-        let secondary     = Color::from_rgb(0x5c, 0x9c, 0xf5); // soft blue
-        let accent        = Color::from_rgb(0x9d, 0x7c, 0xd8); // purple
-        let error         = Color::from_rgb(0xe0, 0x6c, 0x75); // soft red
-        let warning       = Color::from_rgb(0xf5, 0xa7, 0x42); // orange
-        let success       = Color::from_rgb(0x7f, 0xd8, 0x8f); // soft green
-        let info          = Color::from_rgb(0x56, 0xb6, 0xc2); // teal/cyan
-        let text          = Color::from_rgb(0xe0, 0xe0, 0xe0); // light gray
-        let text_muted    = Color::from_rgb(0x6a, 0x6a, 0x6a); // mid gray (comment)
-        let text_emph     = Color::from_rgb(0xe5, 0xc0, 0x7b); // yellow
-        let background    = Color::from_rgb(0x21, 0x21, 0x21); // OpenCode's exact bg
-        let bg_panel      = Color::from_rgb(0x25, 0x25, 0x25); // current line
-        let bg_darker     = Color::from_rgb(0x12, 0x12, 0x12); // darker than bg
-        let border        = Color::from_rgb(0x4b, 0x4c, 0x5c); // OpenCode's exact border
-        let border_focus  = primary;                              // focused = primary
-        let border_dim    = Color::from_rgb(0x30, 0x30, 0x30); // selection
-
-        Self {
-            // Base
-            primary,
-            secondary,
-            accent,
-            // Status
-            error,
-            warning,
-            success,
-            info,
-            // Text
-            text,
-            text_muted,
-            text_emphasized: text_emph,
-            // Background
-            background,
-            background_panel: bg_panel,
-            background_darker: bg_darker,
-            // Border
-            border,
-            border_focused: border_focus,
-            border_dim,
-            // Messages
-            user_message: secondary,
-            agent_message: primary,
-            // Markdown — matches OpenCode's markdown color mapping
-            md_text: text,
-            md_heading: secondary,       // headings = secondary (blue)
-            md_link: primary,            // links = primary (orange)
-            md_link_text: info,          // link text = cyan
-            md_code: success,            // inline code = green
-            md_blockquote: text_emph,    // blockquotes = yellow
-            md_emph: text_emph,          // emphasis = yellow
-            md_strong: accent,           // strong = purple
-            md_horizontal_rule: text_muted,
-            md_list_item: primary,       // list items = primary (orange)
-            md_list_enum: info,          // enum items = cyan
-            md_code_block: text,         // code block text = foreground
-            // Syntax highlighting — matches OpenCode's Chroma mapping
-            syntax_comment: text_muted,  // comments = gray
-            syntax_keyword: secondary,   // keywords = blue
-            syntax_function: primary,    // functions = orange
-            syntax_variable: error,      // variables = red
-            syntax_string: success,      // strings = green
-            syntax_number: accent,       // numbers = purple
-            syntax_type: text_emph,      // types = yellow
-            syntax_operator: info,       // operators = cyan
-            syntax_punctuation: text,    // punctuation = foreground
-        }
+        ThemeColors::default().to_theme()
     }
 }
 
 impl Theme {
-    pub fn primary_style(&self) -> Style {
-        Style::new().fg(self.primary)
+    pub fn from_colors(colors: &ThemeColors) -> Self { colors.to_theme() }
+    pub fn to_colors(&self) -> ThemeColors { ThemeColors::from_theme(self) }
+    pub fn swatch_colors(&self) -> [Color; 5] {
+        [self.primary, self.secondary, self.accent, self.success, self.warning]
     }
 
-    pub fn secondary_style(&self) -> Style {
-        Style::new().fg(self.secondary)
-    }
-
-    pub fn success_style(&self) -> Style {
-        Style::new().fg(self.success)
-    }
-
-    pub fn error_style(&self) -> Style {
-        Style::new().fg(self.error)
-    }
-
-    pub fn muted_style(&self) -> Style {
-        Style::new().fg(self.text_muted)
-    }
-
-    pub fn warning_style(&self) -> Style {
-        Style::new().fg(self.warning)
-    }
-
-    pub fn info_style(&self) -> Style {
-        Style::new().fg(self.info)
-    }
-
-    pub fn accent_style(&self) -> Style {
-        Style::new().fg(self.accent)
-    }
-
-    pub fn text_style(&self) -> Style {
-        Style::new().fg(self.text)
-    }
-
-    pub fn text_muted_style(&self) -> Style {
-        Style::new().fg(self.text_muted)
-    }
-
-    pub fn border_style(&self) -> Style {
-        Style::new().fg(self.border)
-    }
+    pub fn primary_style(&self) -> Style { Style::new().fg(self.primary) }
+    pub fn secondary_style(&self) -> Style { Style::new().fg(self.secondary) }
+    pub fn success_style(&self) -> Style { Style::new().fg(self.success) }
+    pub fn error_style(&self) -> Style { Style::new().fg(self.error) }
+    pub fn muted_style(&self) -> Style { Style::new().fg(self.text_muted) }
+    pub fn warning_style(&self) -> Style { Style::new().fg(self.warning) }
+    pub fn info_style(&self) -> Style { Style::new().fg(self.info) }
+    pub fn accent_style(&self) -> Style { Style::new().fg(self.accent) }
+    pub fn text_style(&self) -> Style { Style::new().fg(self.text) }
+    pub fn text_muted_style(&self) -> Style { Style::new().fg(self.text_muted) }
+    pub fn border_style(&self) -> Style { Style::new().fg(self.border) }
 }
 
 #[cfg(test)]
@@ -196,108 +217,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_theme_matches_opencode() {
-        let theme = Theme::default();
-        // OpenCode's exact colors
-        assert_eq!(theme.primary, Color::from_rgb(0xfa, 0xb2, 0x83));
-        assert_eq!(theme.secondary, Color::from_rgb(0x5c, 0x9c, 0xf5));
-        assert_eq!(theme.accent, Color::from_rgb(0x9d, 0x7c, 0xd8));
-        assert_eq!(theme.text, Color::from_rgb(0xe0, 0xe0, 0xe0));
-        assert_eq!(theme.background, Color::from_rgb(0x21, 0x21, 0x21));
-        assert_eq!(theme.border, Color::from_rgb(0x4b, 0x4c, 0x5c));
-        assert_eq!(theme.text_muted, Color::from_rgb(0x6a, 0x6a, 0x6a));
-    }
-
-    #[test]
-    fn test_primary_style() {
-        let theme = Theme::default();
-        let style = theme.primary_style();
-        assert_eq!(style.fg, Some(theme.primary));
-    }
-
-    #[test]
-    fn test_markdown_colors_use_theme_palette() {
-        let theme = Theme::default();
-        // Headings should be secondary (blue)
-        assert_eq!(theme.md_heading, theme.secondary);
-        // List items should be primary (orange)
-        assert_eq!(theme.md_list_item, theme.primary);
-    }
-
-    #[test]
-    fn test_secondary_style() {
+    fn test_default_theme() {
         let t = Theme::default();
-        let s = t.secondary_style();
-        assert_eq!(s.fg, Some(t.secondary));
+        assert_eq!(t.primary, Color::from_rgb(0xfa, 0xb2, 0x83));
+        assert_eq!(t.secondary, Color::from_rgb(0x5c, 0x9c, 0xf5));
+        assert_eq!(t.background, Color::from_rgb(0x21, 0x21, 0x21));
     }
 
     #[test]
-    fn test_success_style() {
-        let t = Theme::default();
-        let s = t.success_style();
-        assert_eq!(s.fg, Some(t.success));
+    fn test_colors_roundtrip() {
+        let c = ThemeColors::default();
+        let t = c.to_theme();
+        let c2 = ThemeColors::from_theme(&t);
+        assert_eq!(c.primary, c2.primary);
+        assert_eq!(c.background, c2.background);
     }
 
     #[test]
-    fn test_error_style() {
-        let t = Theme::default();
-        let s = t.error_style();
-        assert_eq!(s.fg, Some(t.error));
+    fn test_colors_serialize() {
+        let c = ThemeColors::default();
+        let json = serde_json::to_string(&c).unwrap();
+        let c2: ThemeColors = serde_json::from_str(&json).unwrap();
+        assert_eq!(c.primary, c2.primary);
     }
 
     #[test]
-    fn test_muted_style() {
-        let t = Theme::default();
-        let s = t.muted_style();
-        assert_eq!(s.fg, Some(t.text_muted));
+    fn test_from_colors() {
+        let c = ThemeColors { primary: "#ff0000".into(), ..Default::default() };
+        let t = Theme::from_colors(&c);
+        assert_eq!(t.primary, Color::from_rgb(255, 0, 0));
+        assert_eq!(t.md_link, t.primary);
+        assert_eq!(t.md_heading, t.secondary);
     }
 
     #[test]
-    fn test_warning_style() {
-        let t = Theme::default();
-        let s = t.warning_style();
-        assert_eq!(s.fg, Some(t.warning));
+    fn test_parse_hex() {
+        assert_eq!(parse_hex("#fab283"), Some(Color::from_rgb(0xfa, 0xb2, 0x83)));
+        assert_eq!(parse_hex("fab283"), Some(Color::from_rgb(0xfa, 0xb2, 0x83)));
+        assert_eq!(parse_hex(""), None);
+        assert_eq!(parse_hex("#fff"), None);
     }
 
     #[test]
-    fn test_info_style() {
+    fn test_derived_colors() {
         let t = Theme::default();
-        let s = t.info_style();
-        assert_eq!(s.fg, Some(t.info));
+        assert_eq!(t.md_heading, t.secondary);
+        assert_eq!(t.md_link, t.primary);
+        assert_eq!(t.syntax_comment, t.text_muted);
+        assert_eq!(t.syntax_keyword, t.secondary);
+        assert_eq!(t.user_message, t.secondary);
+        assert_eq!(t.agent_message, t.primary);
     }
 
     #[test]
-    fn test_accent_style() {
+    fn test_style_helpers() {
         let t = Theme::default();
-        let s = t.accent_style();
-        assert_eq!(s.fg, Some(t.accent));
+        assert_eq!(t.primary_style().fg, Some(t.primary));
+        assert_eq!(t.error_style().fg, Some(t.error));
+        assert_eq!(t.border_style().fg, Some(t.border));
     }
 
     #[test]
-    fn test_text_style() {
+    fn test_swatch_colors() {
         let t = Theme::default();
-        let s = t.text_style();
-        assert_eq!(s.fg, Some(t.text));
-    }
-
-    #[test]
-    fn test_text_muted_style() {
-        let t = Theme::default();
-        let s = t.text_muted_style();
-        assert_eq!(s.fg, Some(t.text_muted));
-    }
-
-    #[test]
-    fn test_border_style() {
-        let t = Theme::default();
-        let s = t.border_style();
-        assert_eq!(s.fg, Some(t.border));
-    }
-
-    #[test]
-    fn test_theme_readability() {
-        let t = Theme::default();
-        assert_ne!(t.background, t.text);
-        assert_ne!(t.background_darker, t.text);
+        assert_eq!(t.swatch_colors().len(), 5);
     }
 }

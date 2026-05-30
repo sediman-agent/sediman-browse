@@ -11,7 +11,7 @@ pub use renderer::{
 };
 pub use event::{AppEvent, EventLoop};
 pub use layout::{LayoutManager, Zone};
-pub use styling::Theme;
+pub use styling::{Theme, ThemeColors};
 pub use command::CommandRegistry;
 pub use command::{Command, CommandCategory};
 pub use input::{TextEditor, Completer};

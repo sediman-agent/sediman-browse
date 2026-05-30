@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -259,7 +259,8 @@ class TestSkillLearnerAgentVerification:
                 "should_patch": False,
                 "verification": "Page shows confirmation message",
             }
-            result = await learner._apply_evaluation(evaluation)
+            with patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[]):
+                result = await learner._apply_evaluation(evaluation)
             assert result == "verified-skill"
 
             engine = SkillEngine()
@@ -285,7 +286,8 @@ class TestSkillLearnerAgentApplyEvaluation:
                 "category": "test",
                 "should_patch": False,
             }
-            result = await learner._apply_evaluation(evaluation)
+            with patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[]):
+                result = await learner._apply_evaluation(evaluation)
             assert result == "test-skill"
 
             engine = SkillEngine()
@@ -349,6 +351,9 @@ class TestSkillLearnerAgentApplyEvaluation:
             engine = SkillEngine()
             engine.create("google-search", "Search Google for results", ["Navigate", "Search", "Extract"])
 
+            learner_with_engine = SkillLearnerAgent(learner.llm, engine=engine)
+
+            similar_skill = {"name": "google-search", "description": "Search Google for results"}
             evaluation = {
                 "should_learn": True,
                 "skill_name": "google-web-search",
@@ -356,7 +361,8 @@ class TestSkillLearnerAgentApplyEvaluation:
                 "steps": ["Navigate to Google", "Type query", "Extract results"],
                 "should_patch": False,
             }
-            result = await learner._apply_evaluation(evaluation)
+            with patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[similar_skill]):
+                result = await learner_with_engine._apply_evaluation(evaluation)
             assert result == "google-search"
 
             patched = engine.read("google-search")
@@ -384,7 +390,8 @@ class TestSkillLearnerAgentApplyEvaluation:
             result = await learner._apply_evaluation(evaluation)
             assert result == "patch-skill"
 
-            read_back = engine.read("patch-skill")
+            fresh_engine = SkillEngine()
+            read_back = fresh_engine.read("patch-skill")
             assert read_back["version"] == 2
         finally:
             engine_mod.GLOBAL_SKILLS_DIR = original

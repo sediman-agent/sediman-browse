@@ -65,7 +65,7 @@ class TestSessionCodingDetection:
             tool_registry=ToolRegistry(),
             llm_provider=MagicMock(),
         )
-        with patch("sediman.agent.subagents.session.CodingSubagent") as MockCS:
+        with patch("sediman.agent.subagents.session.CodingAgent") as MockCS:
             mock_instance = MockCS.return_value
             mock_instance.run = AsyncMock(
                 return_value=MagicMock(text="All tests pass.", tool_calls=["terminal"])
@@ -101,7 +101,7 @@ class TestSessionCodingDetection:
             llm_provider=MagicMock(),
             on_streaming_text=lambda token, phase="": tokens.append(token),
         )
-        with patch("sediman.agent.subagents.session.CodingSubagent") as MockCS:
+        with patch("sediman.agent.subagents.session.CodingAgent") as MockCS:
             mock_instance = MockCS.return_value
             mock_instance.run = AsyncMock(
                 return_value=MagicMock(text="Built.", tool_calls=[])
@@ -133,7 +133,7 @@ class TestSessionFactoryStreaming:
             permissions={"terminal": "allow", "browser": "deny"},
         )
         with patch.object(registry, "get", return_value=template):
-            with patch("sediman.agent.subagents.session.CodingSubagent") as MockCS:
+            with patch("sediman.agent.subagents.session.CodingAgent") as MockCS:
                 mock_instance = MockCS.return_value
                 mock_instance.run = AsyncMock(
                     return_value=MagicMock(text="Done.", tool_calls=[])

@@ -33,6 +33,7 @@ pub enum AppModal {
     MemoryEditor,
     SoulEditor,
     SkillBrowser,
+    ThemePicker,
     Info {
         title: String,
         lines: Vec<ModalLine>,
@@ -136,6 +137,11 @@ pub struct App {
     pub skill_browser_installed: Vec<String>,
     pub skill_browser_scroll: u16,
     pub skill_browser_visible_rows: u16,
+    // Theme picker state
+    pub theme_picker_selected: usize,
+    pub theme_picker_names: Vec<String>,
+    pub theme_picker_saved_theme: Theme,
+    pub theme_picker_saved_name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -247,6 +253,10 @@ impl App {
             skill_browser_installed: Vec::new(),
             skill_browser_scroll: 0,
             skill_browser_visible_rows: 15,
+            theme_picker_selected: 0,
+            theme_picker_names: Vec::new(),
+            theme_picker_saved_theme: Theme::default(),
+            theme_picker_saved_name: String::new(),
         }
     }
 

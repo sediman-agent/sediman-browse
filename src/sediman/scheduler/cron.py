@@ -20,7 +20,7 @@ RESULTS_FILE = JOBS_DIR / "results.jsonl"
 MAX_RESULT_CHARS = 2000
 MAX_RESULTS_PER_JOB = 100
 
-_CRON_FIELD_RE = re.compile(r"^[\d*/,\-a-zA-Z]+$")
+_CRON_FIELD_RE = re.compile(r"^[\d*/,\-]+$")
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{1,12}$")
 _list_jobs_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 30.0
@@ -128,7 +128,10 @@ class CronManager:
             return []
         jobs = []
         for p in sorted(self.jobs_dir.glob("*.json")):
-            jobs.append(json.loads(p.read_text()))
+            data = json.loads(p.read_text())
+            if "id" not in data:
+                data["id"] = p.stem
+            jobs.append(data)
         _list_jobs_cache[cache_key] = (now, jobs)
         return jobs
 

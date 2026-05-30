@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { handlers, resetState } from "../src/rpc-handlers.js";
 
+const TMP_SOCKET = "/tmp/sediman-test-nonexistent.sock";
+
 describe("rpc-handlers", () => {
 
   beforeEach(() => {
     resetState();
+    process.env.SEDIMAN_PYTHON_SOCKET = TMP_SOCKET;
   });
 
   // ── System (proxied to Python) ──────────────────────────────────

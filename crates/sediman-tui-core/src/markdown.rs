@@ -12,8 +12,12 @@ use crate::styling::Theme;
 
 /// Render a markdown string into styled lines for the cell buffer.
 pub fn render_markdown(text: &str) -> Vec<Line> {
+    render_markdown_with_theme(text, &Theme::default())
+}
+
+pub fn render_markdown_with_theme(text: &str, theme: &Theme) -> Vec<Line> {
     let preprocessed = preprocess_latex(text);
-    let mut renderer = MarkdownRenderer::new();
+    let mut renderer = MarkdownRenderer::new(theme);
     renderer.render(&preprocessed);
     renderer.lines
 }
@@ -133,7 +137,7 @@ fn replace_inline_math(text: &str) -> String {
 /// Render a code block with syntax highlighting into styled lines.
 /// Returns lines wrapped in a bordered box.
 pub fn render_code_block(code: &str, lang: Option<&str>, width: u16) -> Vec<Line> {
-    let mut renderer = MarkdownRenderer::new();
+    let mut renderer = MarkdownRenderer::new(&Theme::default());
     renderer.width = width;
     renderer.render_code_block(code, lang);
     renderer.lines
@@ -148,11 +152,11 @@ struct MarkdownRenderer {
 }
 
 impl MarkdownRenderer {
-    fn new() -> Self {
+    fn new(theme: &Theme) -> Self {
         Self {
             lines: Vec::new(),
             width: 80,
-            theme: Theme::default(),
+            theme: theme.clone(),
         }
     }
 

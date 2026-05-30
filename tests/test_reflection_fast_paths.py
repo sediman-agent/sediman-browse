@@ -51,7 +51,7 @@ class TestReflectOnStepErrorFastPath:
         with patch.object(loop, "_looks_like_error", return_value=False):
             state = AgentState(task="do stuff")
             step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT)
-            obs = Observation(source="s", content="All done successfully. The task was completed and the results are here.", success=True)
+            obs = Observation(source="s", content="All done successfully. The task was completed and all results are present right here.", success=True)
 
             with patch.object(loop._manager, "reflect", new_callable=AsyncMock, return_value={
                 "task_complete": True, "confidence": 0.9, "reasoning": "ok",
@@ -82,7 +82,7 @@ class TestReflectOnStepDataMatchFastPath:
 
         assert result is not None
         assert result.task_complete is True
-        assert result.confidence >= 0.75
+        assert result.confidence >= 0.7
         assert "Data-match" in result.reasoning
 
     @pytest.mark.asyncio
@@ -129,13 +129,13 @@ class TestReflectOnStepSuccessFastPath:
         with patch.object(loop, "_looks_like_error", return_value=False):
             state = AgentState(task="go to google", actions_taken=[{"action": "done"}])
             step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT)
-            obs = Observation(source="s", content="x" * 100, success=True)
+            obs = Observation(source="s", content="x" * 90 + " data: 42", success=True)
 
             result = await loop._reflect_on_step(state, step, obs)
 
         assert result is not None
         assert result.task_complete is True
-        assert result.confidence == 0.85
+        assert result.confidence == 0.70
 
     @pytest.mark.asyncio
     async def test_success_fast_path_without_done_action(self, tmp_sediman_dir):

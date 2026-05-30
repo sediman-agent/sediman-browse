@@ -313,13 +313,15 @@ class TestHubGetIndex:
 
     def test_returns_empty_on_fetch_failure(self):
         client = HubClient()
-        with patch.object(client, "_fetch_json", return_value=None):
+        with patch.object(client, "_fetch_json", return_value=None), \
+             patch.object(client, "_get_local_index", return_value=[]):
             index = client._get_index()
             assert index == []
 
     def test_returns_empty_on_non_list_response(self):
         client = HubClient()
-        with patch.object(client, "_fetch_json", return_value={"error": "not found"}):
+        with patch.object(client, "_fetch_json", return_value={"error": "not found"}), \
+             patch.object(client, "_get_local_index", return_value=[]):
             index = client._get_index()
             assert index == []
 

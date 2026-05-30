@@ -4,16 +4,16 @@ import { join } from "path"
 import { tmpdir } from "os"
 
 describe("config", () => {
-  test("exports DATA_DIR as string", async () => {
+  test("exports getDataDir as function", async () => {
     const mod = await import("../src/config.js")
-    expect(typeof mod.DATA_DIR).toBe("string")
-    expect(mod.DATA_DIR.length).toBeGreaterThan(0)
+    expect(typeof mod.getDataDir).toBe("function")
+    expect(typeof mod.getDataDir()).toBe("string")
   })
 
-  test("exports all path constants", async () => {
+  test("exports all path functions", async () => {
     const mod = await import("../src/config.js")
     for (const key of ["SKILLS_DIR", "MEMORY_DIR", "SESSIONS_DIR", "CRON_DIR", "SOUL_FILE"]) {
-      expect(typeof (mod as Record<string, unknown>)[key]).toBe("string")
+      expect(typeof (mod as Record<string, unknown>)[key]).toBe("function")
     }
   })
 

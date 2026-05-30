@@ -133,7 +133,8 @@ class TestSkillEngineCache:
         engine.read("patch-test")
         assert "patch-test" in engine._read_cache
         engine.patch("patch-test", {"description": "new"})
-        assert "patch-test" not in engine._read_cache
+        assert "patch-test" in engine._read_cache
+        assert engine._read_cache["patch-test"]["description"] == "new"
 
     def test_invalidate_cache_on_delete(self, tmp_sediman_dir):
         skills_dir = tmp_sediman_dir / "skills"
@@ -152,12 +153,12 @@ class TestSkillEngineCache:
         assert engine._read_cache == {}
         assert engine._list_cache is None
 
-    def test_list_skills_full(self, tmp_sediman_dir):
+    def test_list_skills_returns_full_data(self, tmp_sediman_dir):
         skills_dir = tmp_sediman_dir / "skills"
         engine = SkillEngine(skills_dir=skills_dir, use_cache=True)
         engine.create(name="full-1", description="d1", steps=["s1"], structured_steps=[{"description": "s1", "action_type": "navigate"}])
         engine.create(name="full-2", description="d2", steps=["s2"])
-        full = engine.list_skills_full()
+        full = engine.list_skills()
         assert len(full) == 2
         names = [s["name"] for s in full]
         assert "full-1" in names
@@ -174,15 +175,17 @@ class TestSkillEngineCache:
 
 
 class TestSkillEngineFindSimilarOptimized:
-    def test_find_similar_uses_cache(self, tmp_sediman_dir):
+    @pytest.mark.asyncio
+    async def test_find_similar_uses_cache(self, tmp_sediman_dir):
         skills_dir = tmp_sediman_dir / "skills"
         engine = SkillEngine(skills_dir=skills_dir, use_cache=True)
         engine.create(name="google-search", description="Search Google for information", steps=["s1"])
         engine.list_skills()
         assert engine._list_cache is not None
-        result = engine.find_similar("test", "search Google for data")
-        assert result is not None
-        assert result["name"] == "google-search"
+        results = await engine.find_similar("search Google for data")
+        assert results is not None
+        assert len(results) > 0
+        assert results[0]["name"] == "google-search"
 
 
 class TestRecorderEngineInjection:
@@ -319,7 +322,7 @@ class TestHealerEngineInjection:
         )
         assert result is not None
         assert result["version"] == 2
-        assert "heal-test" not in engine._read_cache
+        assert "heal-test" in engine._read_cache
 
 
 class TestSkillDataStructuredSteps:
@@ -387,6 +390,8 @@ class TestPreCheckDedup:
             steps=["Navigate to Google", "Type query", "Click search"],
         )
 
+        similar_skill = {"name": "google-search", "description": "Search Google for information"}
+
         llm = MagicMock()
         llm.chat = AsyncMock(return_value=MagicMock(
             text=json.dumps({
@@ -405,7 +410,8 @@ class TestPreCheckDedup:
             {"action": "click", "arguments": {"index": 1}},
         ]
 
-        with patch("sediman.memory.security.scan_content", return_value=[]):
+        with patch("sediman.memory.security.scan_content", return_value=[]), \
+             patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[similar_skill]):
             result = await learner.review_and_learn(
                 task="search Google for python async info",
                 browser_actions=actions,
@@ -432,13 +438,14 @@ class TestPreCheckDedup:
             {"action": "extract"},
         ]
 
-        result = await learner.review_and_learn(
-            task="do something completely new",
-            browser_actions=actions,
-            result="done",
-            success=True,
-            existing_skills=[],
-        )
+        with patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[]):
+            result = await learner.review_and_learn(
+                task="do something completely new",
+                browser_actions=actions,
+                result="done",
+                success=True,
+                existing_skills=[],
+            )
 
         assert result is None
         llm.chat.assert_called_once()
@@ -489,6 +496,7 @@ class TestApplyEvaluationNoRedundantRead:
             "steps": ["step1", "step2"],
         }
 
-        with patch("sediman.memory.security.scan_content", return_value=[]):
+        with patch("sediman.memory.security.scan_content", return_value=[]), \
+             patch.object(SkillEngine, "find_similar", return_value=[]):
             result = await learner._apply_evaluation(evaluation)
         assert result == "new-skill"

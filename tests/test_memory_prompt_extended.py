@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 from sediman.memory.prompt import (
@@ -157,7 +157,8 @@ class TestGetRelevantContext:
              patch("sediman.memory.store.USER_FILE", mem_dir / "USER.md"), \
              patch("sediman.memory.store.OLD_MEMORY_FILE", tmp_sediman_dir / "MEMORY.md"), \
              patch("sediman.memory.store.OLD_USER_FILE", tmp_sediman_dir / "USER.md"), \
-             patch("sediman.memory.store.OLD_MEMORY_DB", tmp_sediman_dir / "memory.json"):
+             patch("sediman.memory.store.OLD_MEMORY_DB", tmp_sediman_dir / "memory.json"), \
+             patch("sediman.memory.manager.MemoryManager._get_vector_store", return_value=MagicMock(search=MagicMock(return_value=[]))):
             from sediman.memory.store import MemoryStore
             store = MemoryStore()
             store.add("memory", "some unrelated fact")
@@ -190,7 +191,8 @@ class TestGetRelevantContext:
              patch("sediman.memory.store.USER_FILE", mem_dir / "USER.md"), \
              patch("sediman.memory.store.OLD_MEMORY_FILE", tmp_sediman_dir / "MEMORY.md"), \
              patch("sediman.memory.store.OLD_USER_FILE", tmp_sediman_dir / "USER.md"), \
-             patch("sediman.memory.store.OLD_MEMORY_DB", tmp_sediman_dir / "memory.json"):
+             patch("sediman.memory.store.OLD_MEMORY_DB", tmp_sediman_dir / "memory.json"), \
+             patch("sediman.memory.manager.MemoryManager._get_vector_store", return_value=MagicMock(search=MagicMock(return_value=[]))):
             results = get_relevant_context("anything")
             assert results == []
 

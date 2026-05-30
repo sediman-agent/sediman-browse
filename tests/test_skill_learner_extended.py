@@ -275,7 +275,7 @@ class TestReviewAndLearnWithRefinement:
         with patch(
             "sediman.agent.prompts.builder._load_template",
             return_value="You are a skill reviewer.",
-        ):
+        ), patch("sediman.skills.engine.SkillEngine.find_similar", return_value=[]):
             result = await learner.review_and_learn(
                 task="refine me",
                 browser_actions=[
@@ -301,6 +301,7 @@ class TestReviewAndLearnWithRefinement:
         engine.create("existing-skill", "Does a thing", ["a", "b"])
         learner._engine = engine
 
+        similar_skill = {"name": "existing-skill", "description": "Does a thing"}
         mock_llm.chat.return_value = _make_response(
             '{"should_learn": true, "skill_name": "existing-skill", "should_patch": true, '
             '"description": "patched desc", "steps": ["new a", "new b"]}'
@@ -309,7 +310,7 @@ class TestReviewAndLearnWithRefinement:
         with patch(
             "sediman.agent.prompts.builder._load_template",
             return_value="template",
-        ):
+        ), patch.object(SkillEngine, "find_similar", new_callable=AsyncMock, return_value=[similar_skill]):
             result = await learner.review_and_learn(
                 task="do the thing",
                 browser_actions=[
@@ -322,7 +323,8 @@ class TestReviewAndLearnWithRefinement:
             )
 
             assert result == "existing-skill"
-            patched = engine.read("existing-skill")
+            fresh_engine = SkillEngine()
+            patched = fresh_engine.read("existing-skill")
             assert patched["version"] == 2
 
         engine_mod.GLOBAL_SKILLS_DIR = original

@@ -1,26 +1,24 @@
 import { homedir } from "os"
 import { join } from "path"
 
-function dataDir(): string {
+export function getDataDir(): string {
   return process.env.SEDIMAN_DATA_DIR || join(homedir(), ".sediman")
 }
 
-export const DATA_DIR = dataDir()
+export const SKILLS_DIR = () => join(getDataDir(), "skills")
+export const MEMORY_DIR = () => join(getDataDir(), "memories")
+export const SESSIONS_DIR = () => join(getDataDir(), "sessions")
+export const CRON_DIR = () => join(getDataDir(), "cron")
+export const RECORDINGS_DIR = () => join(getDataDir(), "recordings")
+export const AGENTS_DIR = () => join(getDataDir(), "agents")
+export const BROWSER_PROFILE_DIR = () => join(getDataDir(), "browser-profile-cron")
 
-export const SKILLS_DIR = join(DATA_DIR, "skills")
-export const MEMORY_DIR = join(DATA_DIR, "memories")
-export const SESSIONS_DIR = join(DATA_DIR, "sessions")
-export const CRON_DIR = join(DATA_DIR, "cron")
-export const RECORDINGS_DIR = join(DATA_DIR, "recordings")
-export const AGENTS_DIR = join(DATA_DIR, "agents")
-export const BROWSER_PROFILE_DIR = join(DATA_DIR, "browser-profile-cron")
-
-export const SOUL_FILE = join(DATA_DIR, "SOUL.md")
-export const CONTEXT_FILE = join(DATA_DIR, "CONTEXT.md")
-export const AGENT_STATE_FILE = join(DATA_DIR, "agent_state.json")
-export const HISTORY_FILE = join(DATA_DIR, "history")
-export const SCREENSHOT_FILE = join(DATA_DIR, "last_screenshot.png")
-export const TRAJECTORIES_DIR = join(DATA_DIR, "trajectories")
+export const SOUL_FILE = () => join(getDataDir(), "SOUL.md")
+export const CONTEXT_FILE = () => join(getDataDir(), "CONTEXT.md")
+export const AGENT_STATE_FILE = () => join(getDataDir(), "agent_state.json")
+export const HISTORY_FILE = () => join(getDataDir(), "history")
+export const SCREENSHOT_FILE = () => join(getDataDir(), "last_screenshot.png")
+export const TRAJECTORIES_DIR = () => join(getDataDir(), "trajectories")
 
 export const MEMORY_LIMIT = Number(process.env.SEDIMAN_MEMORY_LIMIT) || 2200
 export const USER_LIMIT = Number(process.env.SEDIMAN_USER_LIMIT) || 1375

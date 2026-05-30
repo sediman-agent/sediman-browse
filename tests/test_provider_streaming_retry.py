@@ -84,7 +84,7 @@ class TestChatStream:
         assert tokens == ["Hel", "lo ", "world"]
 
     @pytest.mark.asyncio
-    async def test_temperature_passed_to_api(self):
+    async def test_temperature_not_passed_to_api(self):
         provider = _make_provider()
 
         async def _fake_aiter(**kwargs):
@@ -98,11 +98,10 @@ class TestChatStream:
             provider.chat_stream(
                 messages=[{"role": "user", "content": "hi"}],
                 tools=[],
-                temperature=0.7,
             )
         )
         call_kwargs = provider.client.chat.completions.create.call_args[1]
-        assert call_kwargs["temperature"] == 0.7
+        assert "temperature" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_system_message_prepended(self):
@@ -299,7 +298,9 @@ class TestChatWithRetry:
 class TestGetPlanningProvider:
     def test_returns_self_for_gpt4o(self):
         provider = _make_provider()
-        assert provider.get_planning_provider() is provider
+        result = provider.get_planning_provider()
+        assert isinstance(result, OpenAICompatibleProvider)
+        assert result.model == "gpt-4o-mini"
 
     def test_returns_same_instance_regardless_of_model(self):
         provider = OpenAICompatibleProvider(model="gpt-4o-mini", api_key="test-key")
@@ -309,7 +310,9 @@ class TestGetPlanningProvider:
         provider = OpenAICompatibleProvider(
             model="claude-3.5-sonnet", api_key="test-key"
         )
-        assert provider.get_planning_provider() is provider
+        result = provider.get_planning_provider()
+        assert isinstance(result, OpenAICompatibleProvider)
+        assert result.model == "claude-3-haiku"
 
 
 # ---------------------------------------------------------------------------
@@ -327,10 +330,9 @@ class TestTemperatureParameter:
         await provider.chat(
             messages=[{"role": "user", "content": "hi"}],
             tools=[],
-            temperature=0.3,
         )
         call_kwargs = provider.client.chat.completions.create.call_args[1]
-        assert call_kwargs["temperature"] == 0.3
+        assert "temperature" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_chat_omits_temperature_when_none(self):
@@ -360,11 +362,10 @@ class TestTemperatureParameter:
             provider.chat_stream(
                 messages=[{"role": "user", "content": "hi"}],
                 tools=[],
-                temperature=0.9,
             )
         )
         call_kwargs = provider.client.chat.completions.create.call_args[1]
-        assert call_kwargs["temperature"] == 0.9
+        assert "temperature" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_chat_stream_omits_temperature_when_none(self):

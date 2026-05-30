@@ -94,12 +94,12 @@ class HubSkillSummary:
     name: str
     description: str
     category: str
-    author: str = ""
+    author: str | None = None
     version: int = 1
     installs: int = 0
     trust: str = "community"
-    variables: list[str] = field(default_factory=list)
-    schedule: str = ""
+    variables: list[str] | None = None
+    schedule: str | None = None
     source: str = "hub"
 
 

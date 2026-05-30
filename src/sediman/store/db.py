@@ -155,6 +155,8 @@ async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
 
 async def init_db() -> None:
     await _init_pool()
+    async with get_connection() as conn:
+        await conn.executescript(_SCHEMA)
 
 
 def get_db_path() -> Path:

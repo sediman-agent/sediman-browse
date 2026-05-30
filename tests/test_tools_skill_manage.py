@@ -19,7 +19,9 @@ class TestSkillManageDeleteAction:
             result = await _handle_skill_manage(action="delete", name="del-me")
             assert result.success is True
             assert "deleted" in result.output.lower()
-            assert engine.read("del-me") is None
+
+            fresh_engine = SkillEngine(skills_dir=tmp_path)
+            assert fresh_engine.read("del-me") is None
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_returns_error(self, tmp_path):
@@ -70,7 +72,8 @@ class TestSkillManagePatchWithVerification:
             )
             assert result.success is True
 
-            skill = engine.read("patch-ver")
+            fresh_engine = SkillEngine(skills_dir=tmp_path)
+            skill = fresh_engine.read("patch-ver")
             assert skill["verification"] == "New verification check"
 
 

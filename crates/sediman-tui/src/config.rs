@@ -35,7 +35,7 @@ pub struct TuiConfig {
     pub saved_models: Vec<String>,
 }
 
-fn default_theme() -> String { "nord".into() }
+fn default_theme() -> String { "default".into() }
 fn default_permission() -> String { "ask".into() }
 fn default_side_tab() -> String { "Status".into() }
 fn default_headless() -> bool { true }
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = TuiConfig::default();
-        assert_eq!(config.theme, "nord");
+        assert_eq!(config.theme, "default");
         assert_eq!(config.permission_mode, "ask");
         assert!(!config.side_panel_open);
         assert_eq!(config.side_panel_tab, "Status");

@@ -465,8 +465,6 @@ class ManagerAgent:
                 last_error = last_error or str(e)
                 logger.warning("plan_simple_chat_failed", error=str(e))
 
-        if last_error:
-            return f"[LLM error: {last_error[:300]}]"
         return None
 
     @staticmethod
@@ -553,6 +551,8 @@ class ManagerAgent:
 
         text = await self._collect_llm_response(messages)
         if text:
+            if text.startswith("[LLM error:"):
+                return None
             json_text = self._extract_json(text)
             if json_text:
                 try:
@@ -563,11 +563,7 @@ class ManagerAgent:
                 except json.JSONDecodeError:
                     logger.debug("manager_plan_json_parse_failed", text=json_text[:200])
 
-            return ManagerPlan(
-                browser_task="",
-                strategy=Strategy.CONVERSATIONAL,
-                response=text.strip(),
-            )
+            return None
 
         return None
 

@@ -18,7 +18,7 @@ class TestDelegateParallelContextIsolation:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             return f"result-{task}"
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):
@@ -36,7 +36,7 @@ class TestDelegateParallelContextIsolation:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             return f"result-{task}"
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):
@@ -52,7 +52,7 @@ class TestDelegateParallelContextIsolation:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             return f"result-{task}"
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):
@@ -70,7 +70,7 @@ class TestDelegateParallelContextIsolation:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             return "ok"
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):
@@ -90,7 +90,7 @@ class TestDelegateParallelContextIsolation:
 
         active = {"count": 0, "max": 0}
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             active["count"] += 1
             active["max"] = max(active["max"], active["count"])
             await asyncio.sleep(0.05)
@@ -110,7 +110,7 @@ class TestDelegateParallelContextIsolation:
         llm_provider = MagicMock()
         llm_provider.get_browser_use_llm.return_value = MagicMock()
 
-        async def fake_delegate(task, bs, llm, max_steps=30):
+        async def fake_delegate(task, bs, llm, max_steps=30, **kwargs):
             return None
 
         with patch("sediman.agent.delegate.delegate_task", side_effect=fake_delegate):

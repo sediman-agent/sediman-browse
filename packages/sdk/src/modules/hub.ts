@@ -6,7 +6,9 @@ import { mkdirSync, readdirSync, unlinkSync, rmdirSync, existsSync, readFileSync
 import { join, resolve } from "path"
 import { homedir } from "os"
 import { randomUUID } from "crypto"
-import { SKILLS_DIR } from "../config.js"
+import { getDataDir } from "../config.js"
+
+function skillsDir(): string { return join(getDataDir(), "skills") }
 
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/sediman/skills-hub/main"
 const LOCK_FILE = join(homedir(), ".sediman", "skills-lock.json")
@@ -21,8 +23,8 @@ function safeName(name: string): string {
 
 function skillDirPath(name: string): string {
   safeName(name)
-  const resolved = resolve(join(SKILLS_DIR, name))
-  const base = resolve(SKILLS_DIR)
+  const resolved = resolve(join(skillsDir(), name))
+  const base = resolve(skillsDir())
   if (!resolved.startsWith(base + "/") && resolved !== base) throw new Error(`Path traversal: ${name}`)
   return resolved
 }
@@ -92,7 +94,7 @@ function validate(s: Record<string, unknown>): { valid: boolean; errors: string[
 
 function installSkill(skill: Record<string, unknown>, source: string, sourceUrl: string): void {
   const dir = skillDirPath(String(skill.name))
-  mkdirSync(SKILLS_DIR, { recursive: true }); mkdirSync(dir, { recursive: true })
+  mkdirSync(skillsDir(), { recursive: true }); mkdirSync(dir, { recursive: true })
   const now = new Date().toISOString()
   const skillData = { ...skill, version: (skill.version as number) || 1, created_at: skill.created_at || now, updated_at: now, source: skill.source || "hub" }
   atomicWrite(join(dir, "skill.json"), JSON.stringify(skillData, null, 2))
@@ -203,7 +205,7 @@ export async function handleHubCheckUpdate(params: { name: string }): Promise<{ 
   const { owner, repo, skill: skillName, branch } = parseRef(String(entry.source))
   const remote = await fetchJson(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/skills/${skillName}/skill.json`) as Record<string, unknown> | null
   if (!remote) return { hasUpdate: false, message: "Could not fetch remote skill" }
-  const local = loadSkillFromDir(join(SKILLS_DIR, params.name))
+  const local = loadSkillFromDir(join(skillsDir(), params.name))
   const rv = (remote.version as number) || 1, lv = (local?.version as number) || 1
   if (rv > lv) return { hasUpdate: true, message: `v${rv} available` }
   return { hasUpdate: false, message: "Up to date" }

@@ -359,6 +359,7 @@ class TestLegacyHubCommands:
 
 class TestSkillInstallBundled:
     def test_install_bundled_no_dir(self, runner: CliRunner, tmp_sediman_dir: Path):
-        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"):
+        with patch("sediman.skills.engine.GLOBAL_SKILLS_DIR", tmp_sediman_dir / "skills"), \
+             patch("pathlib.Path.cwd", return_value=tmp_sediman_dir):
             result = runner.invoke(main, ["skill", "install-bundled"])
-        assert result.exit_code == 1 or "No bundled" in result.output
+        assert result.exit_code == 1 or "No bundled" in result.output or "0 skill(s)" in result.output

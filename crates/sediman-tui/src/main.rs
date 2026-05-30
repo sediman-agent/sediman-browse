@@ -207,6 +207,14 @@ async fn main() {
 
     let mut app_state = app::App::new(args.provider, args.model, args.base_url, headless, bridge);
 
+    // Apply saved theme
+    if !saved_config.theme.is_empty() {
+        if let Some(theme) = sediman_tui_core::styling::load_theme(&saved_config.theme) {
+            app_state.theme = theme;
+            app_state.theme_name = saved_config.theme.clone();
+        }
+    }
+
     // Apply saved config to app state
     if saved_config.side_panel_open {
         app_state.show_side_panel = true;

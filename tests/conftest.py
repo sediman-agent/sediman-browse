@@ -44,6 +44,24 @@ def _clear_caches():
         clear_url_cache()
     except Exception:
         pass
+    try:
+        import sediman.store.db as _db
+        _db._pool_initialized = False
+        _db._pool = []
+    except Exception:
+        pass
+    try:
+        import sediman.memory.prompt as _mp
+        from sediman.memory.store import MemoryStore
+        _mp._store = MemoryStore()
+    except Exception:
+        pass
+    try:
+        import sediman.skills.hub as _hub
+        _hub._HUB_CACHE = None
+        _hub._CACHE_TS = 0.0
+    except Exception:
+        pass
 
 
 @pytest.fixture

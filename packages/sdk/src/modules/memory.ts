@@ -1,13 +1,14 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync } from "fs"
 import { join } from "path"
-import { MEMORY_DIR, MEMORY_LIMIT, USER_LIMIT } from "../config.js"
+import { getDataDir, MEMORY_LIMIT, USER_LIMIT } from "../config.js"
 
-const MEMORY_FILE = join(MEMORY_DIR, "MEMORY.md")
-const USER_FILE = join(MEMORY_DIR, "USER.md")
+function getDir(): string { return join(getDataDir(), "memories") }
+function memFile(): string { return join(getDir(), "MEMORY.md") }
+function userFile(): string { return join(getDir(), "USER.md") }
 
 function getFile(target: string): string {
-  if (target === "user") return USER_FILE
-  return MEMORY_FILE
+  if (target === "user") return userFile()
+  return memFile()
 }
 
 function getLimit(target: string): number {
@@ -24,7 +25,7 @@ function parseEntries(target: string): string[] {
 
 function writeEntries(target: string, entries: string[]): void {
   const p = getFile(target)
-  mkdirSync(MEMORY_DIR, { recursive: true })
+  mkdirSync(getDir(), { recursive: true })
   writeFileSync(p, entries.join("\n§\n") + "\n", "utf-8")
 }
 

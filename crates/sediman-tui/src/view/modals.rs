@@ -733,3 +733,58 @@ pub fn render_skill_browser(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         Style::new().fg(t.text_muted).bg(t.background),
     );
 }
+
+pub fn render_theme_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
+    let t = &app.theme;
+    let modal_w = (area.width as usize * 6 / 10).clamp(36, 50) as u16;
+    let modal_h = (app.theme_picker_names.len().min(14) as u16 + 6).clamp(10, 24);
+
+    let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
+    frame.draw_border(buf, Style::new().fg(t.primary), Style::new().fg(t.border));
+    frame.draw_title(buf, " Themes ", Style::new().fg(t.primary).bg(t.background).add_modifier(TextAttributes::bold()));
+    frame.draw_close_hint(buf, " Esc close ", Style::new().fg(t.text_muted).bg(t.background));
+
+    let list_start = frame.modal.y + 2;
+    let inner_x = frame.modal.x + 2;
+
+    for (i, name) in app.theme_picker_names.iter().enumerate() {
+        let row_y = list_start + i as u16;
+        if row_y >= frame.modal.bottom().saturating_sub(3) { break; }
+
+        let is_current = *name == app.theme_name;
+        let is_selected = i == app.theme_picker_selected;
+
+        let (marker, row_style) = if is_selected {
+            ("\u{25b8}", Style::new().fg(t.background).bg(t.primary))
+        } else if is_current {
+            ("\u{25c6}", Style::new().fg(t.secondary).bg(t.background))
+        } else {
+            (" ", Style::new().fg(t.text).bg(t.background))
+        };
+
+        buf.draw_str(inner_x, row_y, marker, row_style);
+
+        let label = if is_current { format!(" {} (current)", name) } else { format!(" {}", name) };
+        buf.draw_str(inner_x + 2, row_y, &label, row_style);
+
+        if let Some(theme) = sediman_tui_core::styling::load_theme(name) {
+            let swatches = theme.swatch_colors();
+            let swatch_x = frame.modal.right().saturating_sub(12);
+            for (si, &color) in swatches.iter().enumerate() {
+                let sx = swatch_x + si as u16 * 2;
+                let s = Style::new().fg(color).bg(if is_selected { t.primary } else { t.background });
+                buf.draw_str(sx, row_y, "\u{2588}\u{2588}", s);
+            }
+        }
+    }
+
+    let sep_y = frame.modal.bottom().saturating_sub(3);
+    for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+        buf.put_char(sx, sep_y, '\u{2500}', Style::new().fg(t.border_dim));
+    }
+
+    let hints_y = frame.modal.bottom().saturating_sub(2);
+    buf.draw_str(frame.modal.x + 2, hints_y,
+        " \u{2191}\u{2193} navigate \u{2502} Enter select \u{2502} Esc cancel ",
+        Style::new().fg(t.text_muted).bg(t.background));
+}

@@ -131,7 +131,7 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
                     if !res.is_empty() {
                         lines.push((String::new(), Style::new()));
                         // Render markdown result with proper padding
-                        let md_lines = markdown::render_markdown(res);
+                        let md_lines = markdown::render_markdown_with_theme(res, &app.theme);
                         for md_line in &md_lines {
                             let (text, style) = flatten_line(md_line, app);
                             if !text.is_empty() {

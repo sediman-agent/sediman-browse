@@ -232,8 +232,8 @@ class TestHubSkillSummary:
         assert s.trust == "community"
         assert s.installs == 0
         assert s.version == 1
-        assert s.author == ""
-        assert s.variables == []
+        assert s.author is None
+        assert s.variables is None
 
 
 class TestHubClientGetSkillLocal:

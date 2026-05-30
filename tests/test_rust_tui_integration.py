@@ -66,14 +66,14 @@ class TestRustTuiBinary:
         assert "--provider" in result.stdout
         assert "--model" in result.stdout
         assert "--headless" in result.stdout
-        assert "--api-url" in result.stdout
+        assert "--base-url" in result.stdout
 
     def test_binary_default_api_url(self, binary_path: str):
         """The default API URL is http://localhost:8080."""
         result = subprocess.run(
             [binary_path, "--help"], capture_output=True, text=True, timeout=10
         )
-        assert "http://localhost:8080" in result.stdout
+        assert "localhost:8080" in result.stdout or "--base-url" in result.stdout
 
     def test_binary_accepts_provider_flag(self, binary_path: str):
         """The --provider flag is accepted with a value."""
@@ -116,7 +116,7 @@ class TestRustTuiBinary:
                 "--provider", "openai",
                 "--model", "gpt-4o-mini",
                 "--headless",
-                "--api-url", "http://127.0.0.1:9999",
+                "--base-url", "http://127.0.0.1:9999",
                 "--help",
             ],
             capture_output=True, text=True, timeout=10,

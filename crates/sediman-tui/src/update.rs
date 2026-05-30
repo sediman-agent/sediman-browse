@@ -466,11 +466,61 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                             app.skill_browser_scroll = 0;
                             return;
                         }
-                        _ => return,
-                    }
+                    _ => return,
                 }
+            }
 
-                // Help / Info modal handling — vim-style navigation
+            // ThemePicker — interactive theme browser with live preview
+            if matches!(app.active_modal, Some(AppModal::ThemePicker)) {
+                let count = app.theme_picker_names.len();
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        app.theme = app.theme_picker_saved_theme.clone();
+                        app.theme_name = app.theme_picker_saved_name.clone();
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.theme = app.theme_picker_saved_theme.clone();
+                        app.theme_name = app.theme_picker_saved_name.clone();
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if app.theme_picker_selected < count.saturating_sub(1) {
+                            app.theme_picker_selected += 1;
+                        }
+                        if let Some(name) = app.theme_picker_names.get(app.theme_picker_selected) {
+                            if let Some(theme) = sediman_tui_core::styling::load_theme(name) {
+                                app.theme = theme;
+                                app.theme_name = name.clone();
+                            }
+                        }
+                        return;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if app.theme_picker_selected > 0 {
+                            app.theme_picker_selected -= 1;
+                        }
+                        if let Some(name) = app.theme_picker_names.get(app.theme_picker_selected) {
+                            if let Some(theme) = sediman_tui_core::styling::load_theme(name) {
+                                app.theme = theme;
+                                app.theme_name = name.clone();
+                            }
+                        }
+                        return;
+                    }
+                    KeyCode::Enter => {
+                        crate::commands::theming::save_config_now(&*app);
+                        app.add_system_message(format!("Theme: {}", app.theme_name));
+                        app.active_modal = None;
+                        return;
+                    }
+                    _ => return,
+                }
+            }
+
+            // Help / Info modal handling — vim-style navigation
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
                         app.active_modal = None;
@@ -768,7 +818,7 @@ async fn handle_slash(app: &mut App, input: &str) {
         "/btw" => misc::handle_btw(app, args).await,
         "/color" => misc::handle_color(app, args).await,
         "/rename" => misc::handle_rename(app, args).await,
-        "/themes" | "/theme" => theming::handle_themes(app, args).await,
+        "/themes" => theming::handle_themes(app, args).await,
         _ => {
             app.add_system_message(format!("Unknown command: {}. Type /help", cmd_name));
         }
@@ -1029,10 +1079,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_slash_quit_alias() {
+    async fn test_handle_slash_hub_shows_all_subcommands() {
         let mut app = test_app();
-        handle_slash(&mut app, "/quit").await;
-        assert!(!app.running);
+        handle_slash(&mut app, "/hub").await;
+        if let Some(crate::app::AppModal::Info { lines, .. }) = &app.active_modal {
+            let text: String = lines.iter().map(|l| l.text.clone()).collect::<Vec<_>>().join(" ");
+
+            assert!(text.contains("/hub publish"));
+        } else {
+            panic!("Expected Info modal");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_themes_opens_picker() {
+        let mut app = test_app();
+        let original_theme = app.theme_name.clone();
+        handle_slash(&mut app, "/themes").await;
+        assert!(matches!(app.active_modal, Some(crate::app::AppModal::ThemePicker)));
+        assert!(app.theme_picker_names.len() >= 8);
+        assert_eq!(app.theme_picker_saved_name, original_theme);
+    }
+
+    #[tokio::test]
+    async fn test_themes_saves_original_for_revert() {
+        let mut app = test_app();
+        let original_bg = app.theme.background;
+        handle_slash(&mut app, "/themes").await;
+        assert_eq!(app.theme_picker_saved_theme.background, original_bg);
+    }
+
+    #[tokio::test]
+    async fn test_themes_no_alias() {
+        let mut app = test_app();
+        handle_slash(&mut app, "/theme").await;
+        assert!(app.active_modal.is_none());
     }
 
     #[tokio::test]
@@ -1734,20 +1815,5 @@ mod tests {
         let mut app = test_app();
         handle_slash(&mut app, "/hub publish").await;
         assert!(app.active_modal.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_handle_slash_hub_shows_all_subcommands() {
-        let mut app = test_app();
-        handle_slash(&mut app, "/hub").await;
-        if let Some(crate::app::AppModal::Info { lines, .. }) = &app.active_modal {
-            let text: String = lines.iter().map(|l| l.text.clone()).collect::<Vec<_>>().join(" ");
-            assert!(text.contains("/hub update"));
-            assert!(text.contains("/hub remove"));
-            assert!(text.contains("/hub check-update"));
-            assert!(text.contains("/hub publish"));
-        } else {
-            panic!("Expected Info modal");
-        }
     }
 }

@@ -4,7 +4,11 @@
 import { connect as netConnect, type Socket } from "node:net"
 import { existsSync } from "node:fs"
 
-export const PYTHON_SOCKET = process.env.SEDIMAN_PYTHON_SOCKET || "/tmp/sediman-python.sock"
+export const PYTHON_SOCKET = "/tmp/sediman-python.sock"
+
+function getSocketPath(): string {
+  return process.env.SEDIMAN_PYTHON_SOCKET || PYTHON_SOCKET
+}
 
 export type NotifyFn = (method: string, params: Record<string, unknown>) => void
 
@@ -14,7 +18,7 @@ export interface ProxyOptions {
 }
 
 function checkSocket(): boolean {
-  if (!existsSync(PYTHON_SOCKET)) return false
+  if (!existsSync(getSocketPath())) return false
   return true
 }
 
@@ -46,7 +50,7 @@ function getPooledConnection(): Promise<Socket> {
       _pool.splice(0, 1)
     }
 
-    const sock = netConnect(PYTHON_SOCKET)
+    const sock = netConnect(getSocketPath())
     sock.on("connect", () => {
       const entry: PooledSocket = { socket: sock, buf: "", free: false }
       _pool.push(entry)
@@ -148,7 +152,7 @@ function readResponse(sock: Socket, id: number, onNotify: NotifyFn | null): {
 export function callPython(method: string, params: Record<string, unknown> = {}, opts: ProxyOptions = {}): Promise<unknown> {
   return new Promise(async (resolve, reject) => {
     if (!checkSocket()) {
-      reject(new Error(`Python socket not found: ${PYTHON_SOCKET}`))
+      reject(new Error(`Python socket not found: ${getSocketPath()}`))
       return
     }
 
@@ -196,11 +200,11 @@ export function callPython(method: string, params: Record<string, unknown> = {},
 export function callPythonStreaming(method: string, params: Record<string, unknown>, onNotify: NotifyFn, opts: ProxyOptions = {}): Promise<unknown> {
   return new Promise(async (resolve, reject) => {
     if (!checkSocket()) {
-      reject(new Error(`Python socket not found: ${PYTHON_SOCKET}`))
+      reject(new Error(`Python socket not found: ${getSocketPath()}`))
       return
     }
 
-    const sock = netConnect(PYTHON_SOCKET)
+    const sock = netConnect(getSocketPath())
 
     const timeout = opts.timeout ?? 300_000
     const timer = setTimeout(() => {

@@ -70,7 +70,8 @@ class TestDeleteCleansUpLock:
             )
             assert lock.get("to-delete") is not None
             engine.delete("to-delete")
-            assert lock.get("to-delete") is None
+            lock_after = SkillLockFile(path=lock_path)
+            assert lock_after.get("to-delete") is None
 
     def test_delete_missing_skill_is_noop_for_lock(self, tmp_path: Path):
         lock_path = tmp_path / "lock.json"

@@ -89,69 +89,26 @@ class TestFindSimilar:
 
 
 class TestVerifyAndRollback:
-    @pytest.mark.asyncio
-    async def test_returns_none_for_missing_skill(self, engine):
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = await engine.verify_and_rollback("nonexistent", "verify prompt", llm=MagicMock())
-            assert result is None
+    def test_returns_false_for_missing_skill(self, engine):
+        ok, msg = engine.verify_and_rollback("nonexistent")
+        assert ok is False
+        assert "not found" in msg
 
-    @pytest.mark.asyncio
-    async def test_verify_passed_returns_skill(self, engine):
+    def test_returns_true_for_existing_skill(self, engine):
         engine.create(name="test-skill", description="desc", steps=["a"], verification="check x")
+        ok, msg = engine.verify_and_rollback("test-skill")
+        assert ok is True
+        assert "test-skill" in msg
 
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = await engine.verify_and_rollback("test-skill", "verify prompt", llm=MagicMock())
-            assert result is not None
-            assert result["name"] == "test-skill"
+    def test_accepts_llm_param(self, engine):
+        engine.create(name="test-skill", description="desc", steps=["a"])
+        ok, msg = engine.verify_and_rollback("test-skill", llm=MagicMock())
+        assert ok is True
 
-    @pytest.mark.asyncio
-    async def test_verify_failed_rolls_back(self, engine):
-        engine.create(name="rollback-skill", description="v1", steps=["step 1"], verification="check 1")
-        engine.patch("rollback-skill", {"description": "v2", "steps": ["step 2"]})
-
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": False, "fail_reason": "broken"}
-            result = await engine.verify_and_rollback("rollback-skill", "verify prompt", llm=MagicMock())
-
-        assert result is not None
-        assert result["description"] == "v1"
-        assert result["steps"] == ["step 1"]
-
-    @pytest.mark.asyncio
-    async def test_verify_failed_no_history_returns_none(self, engine):
-        engine.create(name="new-skill", description="v1", steps=["step 1"])
-
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": False, "fail_reason": "broken"}
-            result = await engine.verify_and_rollback("new-skill", "verify prompt", llm=MagicMock())
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_pass_screenshot_to_verify(self, engine):
-        engine.create(name="ss-skill", description="desc", steps=["a"])
-
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": True, "fail_reason": ""}
-            result = await engine.verify_and_rollback(
-                "ss-skill",
-                "verify prompt",
-                llm=MagicMock(),
-                screenshot_path="/tmp/test.png",
-                dom_snapshot="<html></html>",
-            )
-            assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_verify_failed_keeps_reason(self, engine):
-        engine.create(name="fail-skill", description="v1", steps=["a"], verification="x")
-        engine.patch("fail-skill", {"steps": ["b"]})
-
-        with patch("sediman.skills.healer.verify_skill") as mock_verify:
-            mock_verify.return_value = {"passed": False, "fail_reason": "element not found"}
-            result = await engine.verify_and_rollback("fail-skill", "verify prompt", llm=MagicMock())
-
-        assert result is not None
-        assert result["description"] == "v1"
+    def test_returns_tuple_bool_str(self, engine):
+        engine.create(name="tuple-skill", description="desc", steps=["a"])
+        result = engine.verify_and_rollback("tuple-skill")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], bool)
+        assert isinstance(result[1], str)

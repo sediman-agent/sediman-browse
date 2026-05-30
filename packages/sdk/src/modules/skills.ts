@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, rmdirSync } from "fs"
 import { join, resolve } from "path"
-import { SKILLS_DIR } from "../config.js"
+import { getDataDir } from "../config.js"
+
+function skillsDir(): string { return join(getDataDir(), "skills") }
 
 const SAFE_NAME_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 
@@ -10,8 +12,8 @@ function validateName(name: string): void {
 
 function skillPath(name: string): string {
   validateName(name)
-  const resolved = resolve(join(SKILLS_DIR, name))
-  const base = resolve(SKILLS_DIR)
+  const resolved = resolve(join(skillsDir(), name))
+  const base = resolve(skillsDir())
   if (!resolved.startsWith(base + "/") && resolved !== base) throw new Error(`Path traversal: ${name}`)
   return resolved
 }
@@ -35,12 +37,12 @@ export interface CreateSkillParams {
 }
 
 export async function handleSkillsList(): Promise<{ skills: Record<string, unknown>[] }> {
-  if (!existsSync(SKILLS_DIR)) return { skills: [] }
+  if (!existsSync(skillsDir())) return { skills: [] }
   const skills: Record<string, unknown>[] = []
-  const entries = readdirSync(SKILLS_DIR, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+  const entries = readdirSync(skillsDir(), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
-    const data = loadSkill(join(SKILLS_DIR, entry.name))
+    const data = loadSkill(join(skillsDir(), entry.name))
     if (data) skills.push({ name: data.name, description: data.description, category: data.category || null, version: data.version || 1, use_count: data.use_count || 0, last_used_at: data.last_used_at || null, updated_at: data.updated_at || null })
   }
   return { skills }
@@ -52,7 +54,7 @@ export async function handleSkillsGet(params: { name: string }): Promise<Record<
 }
 
 export async function handleSkillsCreate(params: CreateSkillParams): Promise<Record<string, unknown>> {
-  mkdirSync(SKILLS_DIR, { recursive: true })
+  mkdirSync(skillsDir(), { recursive: true })
   const dir = skillPath(params.name)
   mkdirSync(dir, { recursive: true })
   const now = new Date().toISOString()

@@ -37,6 +37,7 @@ pub fn render_into(buf: &mut CellBuffer, app: &mut App) {
             AppModal::MemoryEditor => modals::render_memory_editor(buf, zones.main, app),
             AppModal::SoulEditor => modals::render_soul_editor(buf, zones.main, app),
             AppModal::SkillBrowser => modals::render_skill_browser(buf, zones.main, app),
+            AppModal::ThemePicker => modals::render_theme_picker(buf, zones.main, app),
             AppModal::Info { title, lines, scroll } => {
                 modals::render_info_modal(buf, zones.main, app, title, lines, *scroll);
             }

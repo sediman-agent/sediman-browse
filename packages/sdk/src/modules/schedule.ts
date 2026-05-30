@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs"
 import { join } from "path"
 import { randomUUID } from "crypto"
-import { CRON_DIR } from "../config.js"
+import { getDataDir } from "../config.js"
+
+function cronDir(): string { return join(getDataDir(), "cron") }
 
 const JOB_ID_RE = /^[a-f0-9]{1,12}$/
 const CRON_FIELD_RE = /^[\d*/,-]+$/
@@ -18,16 +20,17 @@ function validateCron(cron: string): boolean {
 
 function jobPath(jobId: string): string {
   if (!validateJobId(jobId)) throw new Error(`Invalid job ID: ${jobId}`)
-  return join(CRON_DIR, `${jobId}.json`)
+  return join(cronDir(), `${jobId}.json`)
 }
 
 export async function handleScheduleList(): Promise<{ jobs: Record<string, unknown>[] }> {
-  if (!existsSync(CRON_DIR)) return { jobs: [] }
+  const dir = cronDir()
+  if (!existsSync(dir)) return { jobs: [] }
   const jobs: Record<string, unknown>[] = []
-  for (const f of readdirSync(CRON_DIR).sort()) {
+  for (const f of readdirSync(dir).sort()) {
     if (!f.endsWith(".json")) continue
     try {
-      const data = JSON.parse(readFileSync(join(CRON_DIR, f), "utf-8"))
+      const data = JSON.parse(readFileSync(join(dir, f), "utf-8"))
       jobs.push({ id: f.replace(".json", ""), ...data })
     } catch { /* skip corrupt */ }
   }
@@ -37,7 +40,7 @@ export async function handleScheduleList(): Promise<{ jobs: Record<string, unkno
 export async function handleScheduleAdd(params: { cron: string; task: string; skill?: string }): Promise<{ job_id: string }> {
   if (!validateCron(params.cron)) throw new Error(`Invalid cron expression: ${params.cron}`)
   const jobId = randomUUID().replace(/-/g, "").slice(0, 12)
-  mkdirSync(CRON_DIR, { recursive: true })
+  mkdirSync(cronDir(), { recursive: true })
   const job = { cron: params.cron, task: params.task, skill_name: params.skill || null, enabled: true, created_at: new Date().toISOString() }
   writeFileSync(jobPath(jobId), JSON.stringify(job, null, 2), "utf-8")
   return { job_id: jobId }
