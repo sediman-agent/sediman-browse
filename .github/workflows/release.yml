@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-tui:
+    name: Build TUI binary (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            artifact: sediman-tui-aarch64-macos
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            artifact: sediman-tui-x86_64-macos
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            artifact: sediman-tui-x86_64-linux
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release -p sediman-tui --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          mkdir -p dist/bin
+          cp target/${{ matrix.target }}/release/sediman-tui dist/bin/
+          cd dist && tar czf ${{ matrix.artifact }}.tar.gz bin/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz
+
+  build-wheel:
+    name: Build Python wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Build wheel
+        run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: dist/*.whl
+
+  build-installer:
+    name: Package installer bundle
+    runs-on: ubuntu-latest
+    needs: [build-tui, build-wheel]
+    strategy:
+      matrix:
+        include:
+          - tui_artifact: sediman-tui-aarch64-macos
+            platform: aarch64-macos
+          - tui_artifact: sediman-tui-x86_64-macos
+            platform: x86_64-macos
+          - tui_artifact: sediman-tui-x86_64-linux
+            platform: x86_64-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.tui_artifact }}
+          path: bundle/
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: bundle/wheel/
+      - name: Create bundle
+        run: |
+          mkdir -p release
+          cd bundle
+          tar xzf ${{ matrix.tui_artifact }}.tar.gz
+          cd ..
+          cp bundle/bin/sediman-tui release/
+          cp bundle/wheel/*.whl release/
+          cp scripts/install.sh release/
+          cp scripts/uninstall.sh release/
+          cd release && tar czf sediman-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz *
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sediman-${{ matrix.platform }}
+          path: release/sediman-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz
+
+  publish-github:
+    name: Publish to GitHub Releases
+    runs-on: ubuntu-latest
+    needs: [build-installer, build-wheel]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sediman-*
+          path: artifacts/
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: artifacts/
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz *.whl > checksums.txt
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.whl
+            artifacts/checksums.txt
+          generate_release_notes: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [build-wheel]
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-docker:
+    name: Publish Docker image to GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            latest
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

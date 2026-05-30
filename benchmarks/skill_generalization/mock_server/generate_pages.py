@@ -200,21 +200,11 @@ def generate_evil_html(template: str, variant: str, data: dict[str, str]) -> str
             f'cursor:pointer;font-size:12px;">{action}</button>'
         )
     
-    # Hidden real button for layer 0
-    real_button = (
-        f'<button id="{r()}" class="{c()}" onclick="showLayer(1)" '
-        f'style="opacity:0.005;position:absolute;left:50px;top:80px;'
-        f'padding:12px 24px;cursor:pointer;border:none;background:transparent;" '
-        f'title="Continue"></button>'
-    )
+    # Hidden real button for layer 0 — injected by JS AFTER page load, not in initial DOM
+    hidden_nav_id = f"nav-btn-{r()}"
     
-    # Insert hidden button in the middle of fake buttons
-    mid = len(fake_buttons) // 3  # Not exactly middle — harder to find
-    buttons_html = (
-        "\n".join(fake_buttons[:mid]) + "\n" + 
-        real_button + "\n" + 
-        "\n".join(fake_buttons[mid:])
-    )
+    # Only fake buttons in initial DOM — real button injected by JS at inject point
+    buttons_html = "\n".join(fake_buttons) + '\n<span id="nav-btn-inject-point" style="display:none;"></span>'
     
     # Layer 3: Cookie Maze — 40 buttons, 1 ghost
     cookie_buttons = [
@@ -230,19 +220,32 @@ def generate_evil_html(template: str, variant: str, data: dict[str, str]) -> str
     ]
     
     ghost_id = f"ghost-{hash_str(f'{template}:{variant}:cookie', 8)}"
+    # Real ghost: NO id pattern, NO text, NO onclick, wired via addEventListener
+    real_ghost_id = r()
+    ghost_ids = [real_ghost_id]
+    
+    # 9 decoy ghosts: look identical, all call resetProgress()
+    for _ in range(9):
+        ghost_ids.append(r())
+    
+    random.shuffle(ghost_ids)
+    
     cookie_html_parts = []
     for action in cookie_buttons:
         cookie_html_parts.append(
             f'<button class="{c()}" onclick="resetProgress();">'
             f'{action}</button>'
         )
-    # Ghost button: NO text, NO inline onclick (set via JS later)
-    cookie_html_parts.append(
-        f'<button class="{c()}" id="{ghost_id}" '
-        f'style="opacity:0.005;position:absolute;left:180px;top:120px;'
-        f'padding:10px 20px;cursor:pointer;border:none;background:transparent;">'
-        f'</button>'
-    )
+    
+    for gid in ghost_ids:
+        cookie_html_parts.append(
+            f'<button class="{c()}" id="{gid}" '
+            f'style="opacity:0.005;position:absolute;'
+            f'left:{random.randint(100,400)}px;top:{random.randint(80,300)}px;'
+            f'padding:10px 20px;cursor:pointer;border:none;background:transparent;">'
+            f'</button>'
+        )
+    
     random.shuffle(cookie_html_parts)
     cookie_buttons_html = "\n".join(cookie_html_parts)
     
@@ -463,7 +466,8 @@ canvas{{width:100%;height:100%}}
           <input type="checkbox"><span>I consent to marketing communications</span>
         </div>
         <div class="{c()}" onclick="saveConsentAndContinue(this)">
-          <input type="checkbox" id="consent-{variant_display.replace(' ', '-')}">
+          <input type="checkbox" id="consent-{variant_display.replace(' ', '-')}" 
+                 onchange="consentChecked=this.checked;if(this.checked&&confirmTyped)document.getElementById('cancel-continue-btn').disabled=false;else document.getElementById('cancel-continue-btn').disabled=true;">
           <span>I consent to {variant_display} data processing</span>
         </div>
         <div class="{c()}" onclick="resetProgress();">
@@ -504,7 +508,7 @@ canvas{{width:100%;height:100%}}
 <div id="layer3" class="hidden">
   <div class="{c()}">
     <div class="{c()}">Cookie Settings</div>
-    <nav class="{c()}"><button class="{c()}" onclick="resetProgress();">Back</button></nav>
+    <nav class="{c()}"><button class="{c()}" onclick="showLayer(1)">Back</button></nav>
   </div>
   <div class="{c()}">
     <div class="{c()}">
@@ -689,47 +693,85 @@ function showLayer(n) {{
 // ===== PROGRESS RESET =====
 function resetProgress() {{
     resetCount++;
-    if (resetCount >= 2) {{
-        currentLayer = 0;
-        resetCount = 0;
-        consentChecked = false;
-        confirmTyped = false;
-        dataTableBuilt = false;
-        window.__DATA_READY = false;
-        for (let i = 0; i <= 7; i++) {{
-            const el = document.getElementById('layer' + i);
-            if (el) el.classList.add('hidden');
-        }}
-        document.getElementById('layer0').classList.remove('hidden');
-        // Add random delay to simulate server error
-        alert('Session reset due to invalid navigation. Starting over.');
-        // Reset data table area
-        const container = document.getElementById('data-table-container');
-        if (container) {{
-            container.innerHTML = '<div class="spinner"></div><p style="text-align:center;color:#999;font-size:13px;">Loading dataset...</p>';
-        }}
-        window.scrollTo(0, 0);
-    }} else {{
-        alert('Invalid action. (' + (2 - resetCount) + ' attempts remaining before reset)');
+    currentLayer = 0;
+    resetCount = 0;
+    consentChecked = false;
+    confirmTyped = false;
+    dataTableBuilt = false;
+    window.__DATA_READY = false;
+    window.__REAL_GHOST_ID = null;
+    for (let i = 0; i <= 7; i++) {{
+        const el = document.getElementById('layer' + i);
+        if (el) el.classList.add('hidden');
     }}
+    document.getElementById('layer0').classList.remove('hidden');
+    
+    // Reset DOM state — uncheck all consent checkboxes, clear inputs
+    var checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    for (var ci = 0; ci < checkboxes.length; ci++) {{
+        checkboxes[ci].checked = false;
+    }}
+    var confirmInput = document.getElementById('confirm-input');
+    if (confirmInput) {{ confirmInput.value = ''; }}
+    var confirmStatus = document.getElementById('confirm-status');
+    if (confirmStatus) {{ confirmStatus.textContent = ''; }}
+    var cancelBtn = document.getElementById('cancel-continue-btn');
+    if (cancelBtn) {{ cancelBtn.disabled = true; }}
+    var vdbc = document.getElementById('view-data-btn-container');
+    if (vdbc) {{ vdbc.innerHTML = ''; }}
+    
+    const container = document.getElementById('data-table-container');
+    if (container) {{
+        container.innerHTML = '<div class="spinner"></div><p style="text-align:center;color:#999;font-size:13px;">Loading dataset...</p>';
+    }}
+    const badge = document.getElementById('data-verified-badge');
+    if (badge) badge.style.display = 'none';
+    alert('Session reset due to invalid navigation. Starting over.');
+    window.scrollTo(0, 0);
 }}
 
-// ===== GHOST BUTTON: addEventListener, NOT inline onclick =====
+// ===== GHOST BUTTONS: 10 ghost buttons, only 1 real =====
+// Real ghost ID is stored in a closure, not in the DOM
+window.__REAL_GHOST_ID = '{real_ghost_id}';
 (function() {{
-    const ghost = document.getElementById('{ghost_id}');
-    if (ghost) {{
-        ghost.addEventListener('click', function() {{
-            showLayer(4);
-        }});
+    // Wire up ALL ghost buttons — 9 call resetProgress, 1 calls showLayer(4)
+    var ghostIds = {json.dumps(ghost_ids)};
+    for (var i = 0; i < ghostIds.length; i++) {{
+        var btn = document.getElementById(ghostIds[i]);
+        if (btn) {{
+            if (ghostIds[i] === '{real_ghost_id}') {{
+                btn.addEventListener('click', function() {{
+                    showLayer(4);
+                }});
+            }} else {{
+                btn.addEventListener('click', function() {{
+                    resetProgress();
+                }});
+            }}
+        }}
     }}
     
-    // Also wire up the security submit button
+    // Wire up the security submit button (with validation)
     const secBtn = document.getElementById('security-submit-btn');
     if (secBtn) {{
         secBtn.addEventListener('click', function() {{
-            showLayer(5);
+            if (validateSecurityForm()) {{
+                showLayer(5);
+            }}
         }});
     }}
+    
+    // Inject hidden nav button AFTER page load (not in initial DOM)
+    setTimeout(function() {{
+        var container = document.getElementById('nav-btn-inject-point');
+        if (!container) return;
+        var btn = document.createElement('button');
+        btn.id = '{hidden_nav_id}';
+        btn.style.cssText = 'opacity:0.005;position:absolute;left:50px;top:80px;padding:12px 24px;cursor:pointer;border:none;background:transparent;';
+        btn.title = 'Continue';
+        btn.addEventListener('click', function() {{ showLayer(1); }});
+        container.parentNode.insertBefore(btn, container);
+    }}, {random.randint(400, 900)});
 }})();
 
 // ===== LAYER 2: CONSENT CHECKBOX + CONFIRM INPUT =====
@@ -828,8 +870,53 @@ function toggleAccordion(header) {{
         parent.querySelectorAll('div > div:last-child').forEach(function(b) {{
             if (b !== body) {{
                 b.style.maxHeight = '0px';
-                b.previousElementSibling.querySelector('span').textContent = '+';
+                if (b.previousElementSibling) {{
+                    b.previousElementSibling.querySelector('span').textContent = '+';
+                }}
             }}
+        }});
+    }}
+    
+    if (isOpen) {{
+        body.style.maxHeight = '0px';
+        header.querySelector('span').textContent = '+';
+    }} else {{
+        body.style.maxHeight = '800px';
+        header.querySelector('span').textContent = '−';
+        
+        // If this is the Summary accordion, inject the data button dynamically
+        if (header.textContent.indexOf('Summary for') !== -1) {{
+            setTimeout(function() {{
+                var container = document.getElementById('view-data-btn-container');
+                if (container && !container.querySelector('button')) {{
+                    var btn = document.createElement('button');
+                    btn.style.cssText = 'margin-top:12px;padding:10px 18px;background:#1a73e8;color:#fff;border:none;border-radius:4px;cursor:pointer;';
+                    btn.textContent = 'View {variant_display} Data →';
+                    btn.addEventListener('click', function() {{ showLayer(6); }});
+                    container.appendChild(btn);
+                }}
+            }}, 200);
+        }}
+    }}
+}}
+
+// ===== SECURITY FORM VALIDATION =====
+function validateSecurityForm() {{
+    var v1 = (document.querySelector('input[placeholder="XXXX-XXXX"]') || {{}}).value || '';
+    var v2 = (document.querySelector('input[placeholder*="human"]') || {{}}).value || '';
+    var v3 = (document.querySelector('input[placeholder*="2+2"]') || {{}}).value || '';
+    var captcha = document.getElementById('captcha-input');
+    var v4 = captcha ? captcha.value : '';
+    
+    if (v1.length < 6) {{ alert('Invalid verification code.'); return false; }}
+    if (v2.toLowerCase() !== 'human') {{ alert('Are you a robot?'); return false; }}
+    if (v3 !== '4') {{ alert('Wrong security answer.'); return false; }}
+    if (v4.toUpperCase() !== '{hash_str(f"{template}:{variant}:captcha", 6).upper()}') {{
+        alert('Incorrect CAPTCHA code.');
+        return false;
+    }}
+    return true;
+}}
         }});
     }}
     
