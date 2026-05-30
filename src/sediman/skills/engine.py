@@ -81,9 +81,11 @@ class SkillEngine:
             dir=str(path.parent), prefix=".tmp-", suffix=path.suffix
         )
         try:
-            with open(fd, "w") as f:
+            with os.fdopen(fd, "w") as f:
                 f.write(content)
-            Path(tmp).rename(path)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, str(path))
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
