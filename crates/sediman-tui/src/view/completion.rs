@@ -40,13 +40,21 @@ pub fn render_completion_popup(buf: &mut CellBuffer, input_area: Rect, app: &App
     buf.draw_str(popup_area.x + 1, popup_area.y, title_display, Style::new().fg(t.primary).add_modifier(TextAttributes::bold()));
 
     let selected = app.completer.selected_index();
+
+    // Scroll offset: keep selected item visible in the window
+    let scroll_offset = match selected {
+        Some(s) if s >= max_items => s - max_items + 1,
+        _ => 0,
+    };
+
     let inner_x = popup_area.x + 1;
     let inner_y = popup_area.y + 1;
-    for (i, cmd) in completions.iter().take(max_items).enumerate() {
+    for (i, cmd) in completions.iter().skip(scroll_offset).take(max_items).enumerate() {
         if inner_y + i as u16 >= popup_area.bottom() - 1 {
             break;
         }
-        let is_selected = selected == Some(i);
+        let actual_idx = i + scroll_offset;
+        let is_selected = selected == Some(actual_idx);
         let text = format!("  {}", cmd);
         if is_selected {
             buf.draw_str(inner_x, inner_y + i as u16, &text, Style::new().fg(t.background).bg(t.primary).add_modifier(TextAttributes::bold()));

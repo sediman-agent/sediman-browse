@@ -165,14 +165,6 @@ async fn test_list_schedules() {
 }
 
 #[tokio::test]
-async fn test_hub_info() {
-    let (addr, _shutdown) = spawn_test_server().await;
-    let client = sediman_tui_bridge::ApiClient::new(&addr);
-    let skill = client.hub_info("test-skill").await.unwrap();
-    assert_eq!(skill.name, "test-skill");
-}
-
-#[tokio::test]
 async fn test_hub_info_detail() {
     let (addr, _shutdown) = spawn_test_server().await;
     let client = sediman_tui_bridge::ApiClient::new(&addr);
@@ -180,6 +172,8 @@ async fn test_hub_info_detail() {
     assert_eq!(detail.name, "test-skill");
     assert_eq!(detail.author, "hub-author");
     assert_eq!(detail.trust, "trusted");
+    let basic = client.hub_info_detail("test-skill").await.unwrap();
+    assert_eq!(basic.name, "test-skill");
 }
 
 #[tokio::test]

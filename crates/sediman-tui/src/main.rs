@@ -234,16 +234,7 @@ async fn main() {
 
     // Fetch available models
     if let Ok(models) = app_state.bridge.list_models(None).await {
-        let current = format!("{}/{}", app_state.provider, app_state.model.as_deref().unwrap_or("default"));
-        app_state.model_list = models.into_iter().map(|m| {
-            let is_current = m.id == current;
-            app::ModelEntry {
-                id: m.id,
-                name: m.name,
-                provider: m.provider,
-                is_current,
-            }
-        }).collect();
+        app_state.model_list = models;
     }
 
     // Apply saved theme
@@ -265,9 +256,9 @@ async fn main() {
         _ => app::SideTab::Status,
     };
 
-    // Apply saved models
-    if !saved_config.saved_models.is_empty() {
-        app_state.model_picker_list = saved_config.saved_models;
+    // Apply saved coder backend
+    if !saved_config.coder_backend.is_empty() {
+        app_state.coder_backend = saved_config.coder_backend;
     }
 
     if args.gpu {

@@ -40,20 +40,17 @@ pub fn render_into(buf: &mut CellBuffer, app: &mut App) {
     if let Some(ref modal) = app.active_modal {
         match modal {
             AppModal::Help { scroll } => modals::render_help_modal(buf, zones.main, app, *scroll as usize),
-            AppModal::ModelPicker => modals::render_model_picker(buf, zones.main, app),
-            AppModal::ProviderPicker => modals::render_provider_picker(buf, zones.main, app),
-            AppModal::ConnectPicker => modals::render_connect_picker(buf, zones.main, app),
+            AppModal::ModelPicker => modals::render_model_dialog(buf, zones.main, app),
             AppModal::ApiKeyPrompt => modals::render_api_key_prompt(buf, zones.main, app),
             AppModal::MemoryEditor => modals::render_memory_editor(buf, zones.main, app),
             AppModal::SoulEditor => modals::render_soul_editor(buf, zones.main, app),
             AppModal::SkillBrowser => modals::render_skill_browser(buf, zones.main, app),
             AppModal::ScheduleBrowser => modals::render_schedule_browser(buf, zones.main, app),
+            AppModal::SessionBrowser => modals::render_session_browser(buf, zones.main, app),
             AppModal::ThemePicker => modals::render_theme_picker(buf, zones.main, app),
+            AppModal::CoderPicker => modals::render_coder_picker(buf, zones.main, app),
             AppModal::Info { title, lines, scroll } => {
                 modals::render_info_modal(buf, zones.main, app, title, lines, *scroll);
-            }
-            AppModal::Doctor { .. } => {
-                modals::render_doctor_modal(buf, zones.main, app);
             }
         }
     }
