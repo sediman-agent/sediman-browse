@@ -313,6 +313,13 @@ pub async fn handle_hub_publish(app: &mut App, args: &str) {
     }
 }
 
+pub static CMD_HUB: Command = Command {
+    name: "/hub",
+    aliases: &[],
+    description: "Browse, install & manage hub skills",
+    category: CommandCategory::Hub,
+};
+
 pub static CMD_HUB_BROWSE: Command = Command {
     name: "/hub browse",
     aliases: &[],

@@ -77,7 +77,7 @@ use sediman_tui_core::command::{Command, CommandCategory};
 
 pub static CMD_HELP: Command = Command {
     name: "/help",
-    aliases: &["/h", "/?"],
+    aliases: &[],
     description: "Show categorized command list",
     category: CommandCategory::General,
 };

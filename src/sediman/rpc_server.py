@@ -321,40 +321,43 @@ async def handle_model_switch(params: dict[str, Any], notify: NotifyFn | None = 
 
 
 async def handle_model_list_providers(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
-    providers = []
-    for name, cfg in PROVIDERS.items():
-        providers.append({"name": name, "default_model": cfg.get("model"), "default_base_url": cfg.get("base_url")})
+    from sediman.llm.provider import list_providers as _list_providers
+    providers = _list_providers()
     return {"providers": providers}
 
 
 async def handle_model_list(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    """Return models with friendly display names (matching OpenCode's model.Name)."""
     from sediman.llm.provider import PROVIDERS as _P
+
+    def _model_entry(provider: str, model_id: str, display_name: str) -> dict[str, str]:
+        return {"id": model_id, "name": display_name, "provider": provider}
+
+    def _parse_extra(m: Any, provider: str) -> dict[str, str] | None:
+        """Handle both old (str) and new ({id, name}) extra_models formats."""
+        if isinstance(m, str):
+            return _model_entry(provider, m, m)
+        if isinstance(m, dict):
+            mid = m.get("id", "")
+            mname = m.get("name", mid)
+            return _model_entry(provider, mid, mname)
+        return None
+
     provider_name = (params.get("provider") or "").strip()
-    models = []
-    if provider_name and provider_name in _P:
-        preset = _P[provider_name]
+    models: list[dict[str, str]] = []
+
+    targets = [(provider_name, _P[provider_name])] if provider_name and provider_name in _P else list(_P.items())
+
+    for name, preset in targets:
         default_model = preset.get("model", "")
         if default_model and default_model != "auto":
-            models.append({
-                "id": f"{provider_name}/{default_model}",
-                "name": default_model,
-                "provider": provider_name,
-            })
-        for m in _P.get(provider_name, {}).get("extra_models", []):
-            models.append({
-                "id": f"{provider_name}/{m}",
-                "name": m,
-                "provider": provider_name,
-            })
-    else:
-        for name, preset in _P.items():
-            default_model = preset.get("model", "")
-            if default_model and default_model != "auto":
-                models.append({
-                    "id": f"{name}/{default_model}",
-                    "name": default_model,
-                    "provider": name,
-                })
+            display_name = preset.get("model_name", default_model)
+            models.append(_model_entry(name, default_model, display_name))
+        for m in preset.get("extra_models", []):
+            entry = _parse_extra(m, name)
+            if entry:
+                models.append(entry)
+
     return {"models": models}
 
 
@@ -727,6 +730,15 @@ async def handle_sessions_get(params: dict[str, Any], notify: NotifyFn | None = 
     return session
 
 
+async def handle_sessions_delete(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    from sediman.memory.sessions import delete_session
+    session_id = (params.get("session_id") or "").strip()
+    if not session_id:
+        raise ValueError("session_id is required")
+    await delete_session(session_id)
+    return {"deleted": True}
+
+
 # ── Schedule ────────────────────────────────────────────────────────
 
 async def handle_schedule_list(params: dict[str, Any], notify: NotifyFn | None = None) -> list[dict[str, Any]]:
@@ -943,6 +955,7 @@ HANDLERS: dict[str, Callable] = {
     "sessions.search": handle_sessions_search,
     "sessions.save": handle_sessions_save,
     "sessions.get": handle_sessions_get,
+    "sessions.delete": handle_sessions_delete,
     "schedule.list": handle_schedule_list,
     "schedule.add": handle_schedule_add,
     "schedule.remove": handle_schedule_remove,
@@ -1101,6 +1114,10 @@ async def handle_connection(
 async def serve() -> None:
     """Start the Unix socket JSON-RPC server with cron scheduler."""
     global _cron_scheduler, _INTEGRATION_REGISTRY_NAMES
+
+    # Ensure DB tables exist before accepting connections
+    from sediman.store.db import init_db
+    await init_db()
 
     if os.path.exists(SOCKET):
         os.unlink(SOCKET)

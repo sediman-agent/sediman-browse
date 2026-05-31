@@ -7,7 +7,7 @@ use sediman_tui_core::event::AppEvent;
 
 use crate::app::{App, AppModal};
 use crate::commands::{
-    browser, connect, delegate, doctor, hub, memory, model, plan, provider, schedule, sessions,
+    browser, coder, connect, delegate, hub, memory, model, plan, provider, schedule, sessions,
     skills, soul, system, theming,
 };
 
@@ -51,8 +51,11 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                     if let Ok(text) = clipboard.get_text() {
                         let line_count = text.lines().count();
-                        app.pending_paste = Some(text);
-                        app.editor.insert_str(&format!("[paste {} lines]", line_count));
+                        if line_count > 1 {
+                            app.editor.insert_str(&format!("[paste {} lines]", line_count));
+                        } else {
+                            app.editor.insert_str(&text);
+                        }
                     }
                 }
                 return;
@@ -68,128 +71,166 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
 
             // ── Unified modal key handling ──
             if app.active_modal.is_some() {
-                // ModelPicker has its own input mode — all chars go to search/add field
+                // ── Unified ModelPicker — exact OpenCode copy: ←/→/H/L provider, ↑/↓/J/K model ──
                 if matches!(app.active_modal, Some(AppModal::ModelPicker)) {
                     match key.code {
                         KeyCode::Esc => {
-                            app.model_picker_input.clear();
                             app.active_modal = None;
                             return;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.model_picker_input.clear();
                             app.active_modal = None;
                             return;
                         }
-                        KeyCode::Enter => {
-                            if !app.model_picker_input.is_empty() {
-                                // Add/switch to the typed model
-                                let input = app.model_picker_input.clone();
-                                let (new_provider, new_model) = if let Some(idx) = input.find('/') {
-                                    (input[..idx].to_string(), Some(input[idx + 1..].to_string()))
-                                } else if let Some(idx) = input.find(':') {
-                                    (input[..idx].to_string(), Some(input[idx + 1..].to_string()))
+                        // ← / H: previous provider (wraps around)
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            if app.available_providers.len() > 1 {
+                                if app.model_dialog_provider_idx > 0 {
+                                    app.model_dialog_provider_idx -= 1;
                                 } else {
-                                    (app.provider.clone(), Some(input))
-                                };
-                                app.provider = new_provider;
-                                app.model = new_model;
-                                let full = format!("{}/{}", app.provider, app.model.as_deref().unwrap_or("default"));
-                                if !app.model_picker_list.contains(&full) {
-                                    app.model_picker_list.push(full);
-                                    model::save_model_list(&app.model_picker_list);
+                                    app.model_dialog_provider_idx = app.available_providers.len().saturating_sub(1);
                                 }
-                                app.model_picker_input.clear();
-                                app.active_modal = None;
+                                app.model_dialog_model_idx = 0;
+                                app.model_dialog_scroll = 0;
+                            }
+                            return;
+                        }
+                        // → / L: next provider (wraps around)
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            if app.available_providers.len() > 1 {
+                                if app.model_dialog_provider_idx < app.available_providers.len().saturating_sub(1) {
+                                    app.model_dialog_provider_idx += 1;
+                                } else {
+                                    app.model_dialog_provider_idx = 0;
+                                }
+                                app.model_dialog_model_idx = 0;
+                                app.model_dialog_scroll = 0;
+                            }
+                            return;
+                        }
+                        // ↑ / K: previous model (wraps to bottom)
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let provider_name = app.available_providers
+                                .get(app.model_dialog_provider_idx)
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("");
+                            let count = app.filtered_models_for_provider(provider_name).len();
+                            if app.model_dialog_model_idx > 0 {
+                                app.model_dialog_model_idx -= 1;
                             } else {
-                                // Select the highlighted item from list
-                                let filtered = model_filtered_indices(app);
-                                if let Some(&idx) = filtered.get(app.model_picker_index) {
-                                    let model_str = app.model_picker_list.get(idx).cloned();
-                                    if let Some(model_str) = model_str {
-                                        let (new_provider, new_model) = if let Some(i) = model_str.find('/') {
-                                            (model_str[..i].to_string(), Some(model_str[i + 1..].to_string()))
-                                        } else if let Some(i) = model_str.find(':') {
-                                            (model_str[..i].to_string(), Some(model_str[i + 1..].to_string()))
-                                        } else {
-                                            (app.provider.clone(), Some(model_str))
-                                        };
-                                        app.provider = new_provider;
-                                        app.model = new_model;
-                                    }
-                                }
-                                app.model_picker_input.clear();
-                                app.active_modal = None;
+                                // Wrap to bottom
+                                app.model_dialog_model_idx = count.saturating_sub(1);
+                                app.model_dialog_scroll = count.saturating_sub(10.min(count));
+                            }
+                            // Keep cursor visible
+                            if app.model_dialog_model_idx < app.model_dialog_scroll {
+                                app.model_dialog_scroll = app.model_dialog_model_idx;
                             }
                             return;
                         }
-                        KeyCode::Up => {
-                            if app.model_picker_index > 0 {
-                                app.model_picker_index -= 1;
-                            }
-                            return;
-                        }
-                        KeyCode::Down => {
-                            let filtered = model_filtered_indices(app);
-                            if app.model_picker_index < filtered.len().saturating_sub(1) {
-                                app.model_picker_index += 1;
-                            }
-                            return;
-                        }
-                        KeyCode::Backspace | KeyCode::Delete => {
-                            if app.model_picker_input.is_empty() {
-                                // Remove highlighted model from saved list
-                                let filtered = model_filtered_indices(app);
-                                if let Some(&idx) = filtered.get(app.model_picker_index) {
-                                    if app.model_picker_list.len() > idx {
-                                        let removed = app.model_picker_list.remove(idx);
-                                        model::save_model_list(&app.model_picker_list);
-                                        app.add_system_message(format!("Removed model: {}", removed));
-                                        if app.model_picker_index > 0 {
-                                            app.model_picker_index -= 1;
-                                        }
-                                    }
-                                }
+                        // ↓ / J: next model (wraps to top)
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let provider_name = app.available_providers
+                                .get(app.model_dialog_provider_idx)
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("");
+                            let count = app.filtered_models_for_provider(provider_name).len();
+                            if app.model_dialog_model_idx < count.saturating_sub(1) {
+                                app.model_dialog_model_idx += 1;
                             } else {
-                                app.model_picker_input.pop();
-                                app.model_picker_index = 0;
+                                // Wrap to top
+                                app.model_dialog_model_idx = 0;
+                                app.model_dialog_scroll = 0;
+                            }
+                            // Keep cursor visible (max 10 visible)
+                            let visible = 10;
+                            if app.model_dialog_model_idx >= app.model_dialog_scroll + visible {
+                                app.model_dialog_scroll = app.model_dialog_model_idx - (visible - 1);
                             }
                             return;
                         }
-                        KeyCode::Char('d') if app.model_picker_input.is_empty() => {
-                            // 'd' key also deletes when input is empty (same as memory editor)
-                            let filtered = model_filtered_indices(app);
-                            if let Some(&idx) = filtered.get(app.model_picker_index) {
-                                if app.model_picker_list.len() > idx {
-                                    let removed = app.model_picker_list.remove(idx);
-                                    model::save_model_list(&app.model_picker_list);
-                                    app.add_system_message(format!("Removed model: {}", removed));
-                                    if app.model_picker_index > 0 {
-                                        app.model_picker_index -= 1;
+                        // Enter: select model and sync with backend
+                        KeyCode::Enter => {
+                            let provider_info = app.available_providers
+                                .get(app.model_dialog_provider_idx)
+                                .cloned();
+                            if let Some(p) = provider_info {
+                                let models = app.filtered_models_for_provider(&p.name);
+                                if let Some(selected_model) = models.get(app.model_dialog_model_idx) {
+                                    // Check if provider needs API key and doesn't have one
+                                    if p.needs_api_key && !p.has_key {
+                                        app.connect_target = Some(p.name.clone());
+                                        app.api_key_input.clear();
+                                        app.active_modal = Some(AppModal::ApiKeyPrompt);
+                                        return;
                                     }
+                                    // Sync with backend
+                                    let model_id = selected_model.id.clone();
+                                    if let Err(e) = app.bridge.switch_model(
+                                        &p.name,
+                                        Some(&model_id),
+                                        p.default_base_url.as_deref(),
+                                    ).await {
+                                        app.add_error_message(format!("Failed to switch: {}", e));
+                                        app.active_modal = None;
+                                        return;
+                                    }
+                                    app.provider = p.name.clone();
+                                    app.model = Some(model_id);
+                                    app.add_system_message(format!("Switched to {}", app.display_model_id()));
                                 }
                             }
-                            return;
-                        }
-                        KeyCode::Char(c) => {
-                            app.model_picker_input.push(c);
-                            app.model_picker_index = 0; // reset selection on type
+                            app.active_modal = None;
                             return;
                         }
                         _ => return,
                     }
                 }
 
-                // ProviderPicker — dynamic provider list with search
-                if matches!(app.active_modal, Some(AppModal::ProviderPicker)) {
-                    handle_provider_picker(app, key).await;
-                    return;
-                }
-
-                // ConnectPicker — dynamic provider list with search + key status
-                if matches!(app.active_modal, Some(AppModal::ConnectPicker)) {
-                    handle_connect_picker(app, key).await;
-                    return;
+                // CoderPicker — select coder backend
+                if matches!(app.active_modal, Some(AppModal::CoderPicker)) {
+                    const CODER_BACKENDS: &[&str] = &["internal", "claude-code", "codex", "opencode"];
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.active_modal = None;
+                            return;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if app.coder_picker_selected > 0 {
+                                app.coder_picker_selected -= 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if app.coder_picker_selected < CODER_BACKENDS.len() - 1 {
+                                app.coder_picker_selected += 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Enter => {
+                            if let Some(backend) = CODER_BACKENDS.get(app.coder_picker_selected) {
+                                let old = app.coder_backend.clone();
+                                app.coder_backend = backend.to_string();
+                                if old != app.coder_backend {
+                                    // Persist
+                                    let config = crate::config::TuiConfig::load();
+                                    let mut config = config;
+                                    config.coder_backend = app.coder_backend.clone();
+                                    if let Err(e) = config.save() {
+                                        app.add_error_message(format!("Failed to save: {}", e));
+                                    }
+                                    app.add_system_message(format!("Coder backend: {} → {}", old, backend));
+                                }
+                            }
+                            app.active_modal = None;
+                            return;
+                        }
+                        _ => return,
+                    }
                 }
 
                 // ApiKeyPrompt — type API key, Enter to save
@@ -596,6 +637,164 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 }
             }
 
+            // SessionBrowser — interactive session management
+            if matches!(app.active_modal, Some(AppModal::SessionBrowser)) {
+                let query = app.session_filter.to_lowercase();
+                let filtered_count = app.session_list
+                    .iter()
+                    .filter(|s| {
+                        if query.is_empty() { return true; }
+                        let searchable = format!("{} {}", s.task, s.id).to_lowercase();
+                        searchable.contains(&query)
+                    })
+                    .count();
+
+                match key.code {
+                    KeyCode::Esc => {
+                        app.session_filter.clear();
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.session_filter.clear();
+                        app.active_modal = None;
+                        return;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if app.session_selected < filtered_count.saturating_sub(1) {
+                            app.session_selected += 1;
+                        }
+                        return;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if app.session_selected > 0 {
+                            app.session_selected -= 1;
+                        }
+                        return;
+                    }
+                    KeyCode::Enter => {
+                        // View session detail
+                        let filtered: Vec<&sediman_tui_bridge::SessionInfo> = app.session_list
+                            .iter()
+                            .filter(|s| {
+                                if query.is_empty() { return true; }
+                                let searchable = format!("{} {}", s.task, s.id).to_lowercase();
+                                searchable.contains(&query)
+                            })
+                            .collect();
+                        if let Some(session) = filtered.get(app.session_selected) {
+                            let sid = session.id.to_string();
+                            let task_preview = session.task.clone();
+                            match app.bridge.get_session_detail(&sid).await {
+                                Ok(detail) => {
+                                    let mut lines = vec![
+                                        crate::app::ModalLine::heading(format!("  Session #{}", sid)),
+                                        crate::app::ModalLine::muted(format!("  Task: {}", task_preview)),
+                                        crate::app::ModalLine::muted(format!("  Created: {}", session.created_at)),
+                                        crate::app::ModalLine::blank(),
+                                    ];
+                                    if let Some(steps) = detail.get("steps").and_then(|s| s.as_array()) {
+                                        lines.push(crate::app::ModalLine::accent(format!("  Steps ({})", steps.len())));
+                                        for step in steps.iter().take(20) {
+                                            let action = step.get("action").and_then(|a| a.as_str()).unwrap_or("");
+                                            if !action.is_empty() {
+                                                lines.push(crate::app::ModalLine::normal(format!("    {}", action)));
+                                            }
+                                        }
+                                    }
+                                    if let Some(result) = session.result.as_deref() {
+                                        if !result.is_empty() {
+                                            lines.push(crate::app::ModalLine::blank());
+                                            lines.push(crate::app::ModalLine::accent("  Result"));
+                                            let max_len = 300.min(result.len());
+                                            lines.push(crate::app::ModalLine::normal(format!("    {}...", &result[..max_len])));
+                                        }
+                                    }
+                                    app.active_modal = Some(crate::app::AppModal::Info {
+                                        title: format!("Session #{}", sid),
+                                        lines,
+                                        scroll: 0,
+                                    });
+                                }
+                                Err(e) => {
+                                    app.add_error_message(format!("Failed to load session: {}", e));
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    KeyCode::Char('d') => {
+                        if app.session_filter.is_empty() {
+                            let filtered: Vec<&sediman_tui_bridge::SessionInfo> = app.session_list
+                                .iter()
+                                .filter(|s| {
+                                    if query.is_empty() { return true; }
+                                    let searchable = format!("{} {}", s.task, s.id).to_lowercase();
+                                    searchable.contains(&query)
+                                })
+                                .collect();
+                            if let Some(session) = filtered.get(app.session_selected) {
+                                let sid = session.id.to_string();
+                                match app.bridge.delete_session(&sid).await {
+                                    Ok(()) => {
+                                        app.add_system_message(format!("Deleted session #{}", sid));
+                                        if app.session_selected > 0 {
+                                            app.session_selected -= 1;
+                                        }
+                                        // Refresh list
+                                        if let Ok(sessions) = app.bridge.get_sessions().await {
+                                            app.session_list = sessions;
+                                        }
+                                    }
+                                    Err(e) => app.add_error_message(format!("Failed to delete: {}", e)),
+                                }
+                            }
+                        } else {
+                            app.session_filter.push('d');
+                        }
+                        return;
+                    }
+                    KeyCode::Backspace | KeyCode::Delete => {
+                        if app.session_filter.is_empty() {
+                            // Delete selected session
+                            let filtered: Vec<&sediman_tui_bridge::SessionInfo> = app.session_list
+                                .iter()
+                                .filter(|s| {
+                                    if query.is_empty() { return true; }
+                                    let searchable = format!("{} {}", s.task, s.id).to_lowercase();
+                                    searchable.contains(&query)
+                                })
+                                .collect();
+                            if let Some(session) = filtered.get(app.session_selected) {
+                                let sid = session.id.to_string();
+                                match app.bridge.delete_session(&sid).await {
+                                    Ok(()) => {
+                                        app.add_system_message(format!("Deleted session #{}", sid));
+                                        if app.session_selected > 0 {
+                                            app.session_selected -= 1;
+                                        }
+                                        if let Ok(sessions) = app.bridge.get_sessions().await {
+                                            app.session_list = sessions;
+                                        }
+                                    }
+                                    Err(e) => app.add_error_message(format!("Failed to delete: {}", e)),
+                                }
+                            }
+                        } else {
+                            app.session_filter.pop();
+                            app.session_selected = 0;
+                        }
+                        return;
+                    }
+                    KeyCode::Char(c) => {
+                        app.session_filter.push(c);
+                        app.session_selected = 0;
+                        return;
+                    }
+                    _ => return,
+                }
+            }
+
             // ThemePicker — interactive theme browser with live preview
             if matches!(app.active_modal, Some(AppModal::ThemePicker)) {
                 let count = app.theme_picker_names.len();
@@ -646,145 +845,8 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 }
             }
 
-            // Doctor — interactive diagnostics with install
-            if matches!(app.active_modal, Some(AppModal::Doctor { .. })) {
-                let (installing, check_count) = match &app.active_modal {
-                    Some(AppModal::Doctor { installing, checks, .. }) => (*installing, checks.len()),
-                    _ => unreachable!(),
-                };
-                if installing {
-                    return;
-                }
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        app.active_modal = None;
-                        return;
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.active_modal = None;
-                        return;
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if let Some(AppModal::Doctor { cursor, .. }) = &mut app.active_modal {
-                            if *cursor < check_count.saturating_sub(1) {
-                                *cursor += 1;
-                            }
-                        }
-                        return;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if let Some(AppModal::Doctor { cursor, .. }) = &mut app.active_modal {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                            }
-                        }
-                        return;
-                    }
-                    KeyCode::PageDown => {
-                        if let Some(AppModal::Doctor { cursor, .. }) = &mut app.active_modal {
-                            *cursor = (*cursor + 5).min(check_count.saturating_sub(1));
-                        }
-                        return;
-                    }
-                    KeyCode::PageUp => {
-                        if let Some(AppModal::Doctor { cursor, .. }) = &mut app.active_modal {
-                            *cursor = cursor.saturating_sub(5);
-                        }
-                        return;
-                    }
-                    KeyCode::Char('r') => {
-                        let new_checks = {
-                            let socket = app.bridge_url().to_string();
-                            let provider = app.provider.clone();
-                            let bridge = sediman_tui_bridge::ApiClient::new(&socket);
-                            doctor::run_checks_for_recheck(&bridge, &provider).await
-                        };
-                        if let Some(AppModal::Doctor { checks, cursor, scroll, .. }) = &mut app.active_modal {
-                            *checks = new_checks;
-                            *cursor = 0;
-                            *scroll = 0;
-                        }
-                        return;
-                    }
-                    KeyCode::Enter => {
-                        let (check_idx, install_cmd) = match &app.active_modal {
-                            Some(AppModal::Doctor { checks, cursor, .. }) => {
-                                match checks.get(*cursor) {
-                                    Some(c) => (*cursor, c.install_cmd.clone()),
-                                    None => return,
-                                }
-                            }
-                            _ => return,
-                        };
-                        let cmd = match install_cmd {
-                            Some(c) => c,
-                            None => {
-                                app.show_toast("Nothing to install for this item".into());
-                                return;
-                            }
-                        };
-                        if let Some(AppModal::Doctor { installing, install_output, .. }) = &mut app.active_modal {
-                            *installing = true;
-                            install_output.clear();
-                        }
-                        let tx = event_tx.clone();
-                        let tx_err = tx.clone();
-                        let cmd_owned = cmd;
-                        tokio::spawn(async move {
-                            let _ = tx.send(AppEvent::DoctorInstallOutput(format!("$ {}", cmd_owned)));
-                            let mut child = match tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd_owned)
-                                .stdout(std::process::Stdio::piped())
-                                .stderr(std::process::Stdio::piped())
-                                .spawn()
-                            {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    let _ = tx.send(AppEvent::DoctorInstallOutput(format!("error: {}", e)));
-                                    let _ = tx.send(AppEvent::DoctorInstallDone(check_idx, false));
-                                    return;
-                                }
-                            };
-
-                            if let Some(stdout) = child.stdout.take() {
-                                let tx = tx.clone();
-                                tokio::spawn(async move {
-                                    use tokio::io::AsyncBufReadExt;
-                                    let mut reader = tokio::io::BufReader::new(stdout).lines();
-                                    while let Ok(Some(line)) = reader.next_line().await {
-                                        let _ = tx.send(AppEvent::DoctorInstallOutput(format!("  {}", line)));
-                                    }
-                                });
-                            }
-                            if let Some(stderr) = child.stderr.take() {
-                                tokio::spawn(async move {
-                                    use tokio::io::AsyncBufReadExt;
-                                    let mut reader = tokio::io::BufReader::new(stderr).lines();
-                                    while let Ok(Some(line)) = reader.next_line().await {
-                                        let _ = tx_err.send(AppEvent::DoctorInstallOutput(format!("  {}", line)));
-                                    }
-                                });
-                            }
-
-                            let success = match child.wait().await {
-                                Ok(s) => s.success(),
-                                Err(_) => false,
-                            };
-                            if success {
-                                let _ = tx.send(AppEvent::DoctorInstallOutput("done ✓".into()));
-                            } else {
-                                let _ = tx.send(AppEvent::DoctorInstallOutput("failed ✗".into()));
-                            }
-                            let _ = tx.send(AppEvent::DoctorInstallDone(check_idx, success));
-                        });
-                        return;
-                    }
-                    _ => return,
-                }
-            }
-
             // Help / Info modal handling — vim-style navigation
+            if matches!(app.active_modal, Some(AppModal::Help { .. }) | Some(AppModal::Info { .. })) {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
                         app.active_modal = None;
@@ -837,7 +899,9 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                     _ => return,
                 }
             }
+            } // close if app.active_modal.is_some()
 
+            // ── Non-modal key handling ──
             match key.code {
                 KeyCode::Esc => {
                     if app.agent_running {
@@ -845,7 +909,6 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                         app.agent_running = false;
                         app.append_step("-- Interrupted --".to_string());
                     } else {
-                        app.pending_paste = None;
                         app.editor.delete_line_by_head();
                     }
                 }
@@ -856,7 +919,6 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                         app.agent_running = false;
                         app.append_step("-- Cancelled --".to_string());
                     } else {
-                        app.pending_paste = None;
                         app.editor.delete_line_by_head();
                     }
                 }
@@ -889,14 +951,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                         app.editor.insert_str(cmd);
                         app.completer.complete("");
                     } else {
-                        // If pending paste, replace placeholder with actual content before submit
-                        let input = if let Some(paste) = app.pending_paste.take() {
-                            app.editor.delete_line_by_head();
-                            app.editor.insert_str(&paste);
-                            app.editor.submit()
-                        } else {
-                            app.editor.submit()
-                        };
+                        let input = app.editor.submit();
                         if !input.is_empty() {
                             if input.starts_with('/') {
                                 // Slash commands always work, even while agent is running
@@ -998,7 +1053,6 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                             _ => {}
                         }
                     } else {
-                        app.pending_paste = None;
                         app.editor.input(key);
                         let current = app.editor.lines().join(" ").trim().to_string();
                         if current.starts_with('/') {
@@ -1028,8 +1082,11 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
         }
         AppEvent::Paste(text) => {
             let line_count = text.lines().count();
-            app.pending_paste = Some(text);
-            app.editor.insert_str(&format!("[paste {} lines]", line_count));
+            if line_count > 1 {
+                app.editor.insert_str(&format!("[paste {} lines]", line_count));
+            } else {
+                app.editor.insert_str(&text);
+            }
         }
         AppEvent::Shutdown => {
             app.running = false;
@@ -1059,175 +1116,12 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
         AppEvent::StreamingToken(token, phase) => {
             app.append_streaming_token(&token, &phase);
         }
-        AppEvent::DoctorInstallOutput(line) => {
-            if let Some(AppModal::Doctor { install_output, .. }) = &mut app.active_modal {
-                install_output.push(line);
-                if install_output.len() > 100 {
-                    let excess = install_output.len() - 100;
-                    install_output.drain(0..excess);
-                }
-            }
-        }
-        AppEvent::DoctorInstallDone(check_index, success) => {
-            if let Some(AppModal::Doctor { installing, install_output, .. }) = &mut app.active_modal {
-                *installing = false;
-                install_output.clear();
-            }
-            if success {
-                if let Some(AppModal::Doctor { checks, .. }) = &mut app.active_modal {
-                    if let Some(check) = checks.get_mut(check_index) {
-                        check.status = crate::app::DoctorStatus::Pass;
-                        check.message = "installed ✓".into();
-                        check.install_cmd = None;
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn filtered_provider_count(app: &App) -> usize {
-    let filter = app.provider_filter.to_lowercase();
-    app.available_providers
-        .iter()
-        .filter(|p| {
-            filter.is_empty()
-                || p.name.to_lowercase().contains(&filter)
-                || p.default_model.to_lowercase().contains(&filter)
-        })
-        .count()
-}
-
-fn filtered_provider_at(app: &App, index: usize) -> Option<&sediman_tui_bridge::ProviderInfo> {
-    let filter = app.provider_filter.to_lowercase();
-    app.available_providers
-        .iter()
-        .filter(|p| {
-            filter.is_empty()
-                || p.name.to_lowercase().contains(&filter)
-                || p.default_model.to_lowercase().contains(&filter)
-        })
-        .nth(index)
-}
-
-async fn handle_provider_picker(app: &mut App, key: crossterm::event::KeyEvent) {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.provider_filter.clear();
-            app.provider_picker_index = 0;
-            app.active_modal = None;
-        }
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.provider_filter.clear();
-            app.provider_picker_index = 0;
-            app.active_modal = None;
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.provider_picker_index > 0 {
-                app.provider_picker_index -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            let count = filtered_provider_count(app);
-            if app.provider_picker_index < count.saturating_sub(1) {
-                app.provider_picker_index += 1;
-            }
-        }
-        KeyCode::Enter => {
-            if let Some(p) = filtered_provider_at(app, app.provider_picker_index) {
-                let name = p.name.clone();
-                let default_model = p.default_model.clone();
-                let default_url = p.default_base_url.clone();
-                app.provider = name.clone();
-                if app.model.is_none() || app.model.as_deref() == Some("default") {
-                    app.model = Some(default_model);
-                }
-                let _ = app.bridge.switch_model(&name, app.model.as_deref(), default_url.as_deref()).await;
-                app.add_system_message(format!("Provider: {}", name));
-            }
-            app.provider_filter.clear();
-            app.provider_picker_index = 0;
-            app.active_modal = None;
-        }
-        KeyCode::Backspace | KeyCode::Delete => {
-            app.provider_filter.pop();
-            app.provider_picker_index = 0;
-        }
-        KeyCode::Char(c) => {
-            app.provider_filter.push(c);
-            app.provider_picker_index = 0;
-        }
-        _ => {}
-    }
-}
-
-async fn handle_connect_picker(app: &mut App, key: crossterm::event::KeyEvent) {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.provider_filter.clear();
-            app.provider_picker_index = 0;
-            app.active_modal = None;
-        }
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.provider_filter.clear();
-            app.provider_picker_index = 0;
-            app.active_modal = None;
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.provider_picker_index > 0 {
-                app.provider_picker_index -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            let count = filtered_provider_count(app);
-            if app.provider_picker_index < count.saturating_sub(1) {
-                app.provider_picker_index += 1;
-            }
-        }
-        KeyCode::Enter => {
-            if let Some(p) = filtered_provider_at(app, app.provider_picker_index).cloned() {
-                if !p.needs_api_key {
-                    app.provider = p.name.clone();
-                    let _ = app.bridge.switch_model(&p.name, Some(&p.default_model), p.default_base_url.as_deref()).await;
-                    app.add_system_message(format!("Provider: {} (local, no key needed)", p.name));
-                    app.provider_filter.clear();
-                    app.provider_picker_index = 0;
-                    app.active_modal = None;
-                } else {
-                    app.connect_target = Some(p.name.clone());
-                    app.api_key_input.clear();
-                    app.active_modal = Some(AppModal::ApiKeyPrompt);
-                }
-            }
-        }
-        KeyCode::Backspace | KeyCode::Delete => {
-            app.provider_filter.pop();
-            app.provider_picker_index = 0;
-        }
-        KeyCode::Char(c) => {
-            app.provider_filter.push(c);
-            app.provider_picker_index = 0;
-        }
-        _ => {}
     }
 }
 
 fn scroll_up(app: &mut App, amount: u16) {
     app.scroll_offset = app.scroll_offset.saturating_sub(amount);
     app.auto_scroll = false;
-}
-
-/// Compute filtered model indices based on the picker input text.
-fn model_filtered_indices(app: &App) -> Vec<usize> {
-    let query = app.model_picker_input.to_lowercase();
-    app.model_picker_list
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| query.is_empty() || m.to_lowercase().contains(&query))
-        .map(|(i, _)| i)
-        .collect()
 }
 
 fn scroll_down(app: &mut App, amount: u16) {
@@ -1240,7 +1134,7 @@ async fn handle_slash(app: &mut App, input: &str) {
     let (cmd_name, args) = parse_command(input);
 
     match cmd_name {
-        "/help" | "/h" | "/?" => system::handle_help(app, args).await,
+        "/help" => system::handle_help(app, args).await,
         "/exit" | "/quit" | "/q" => system::handle_exit(app, args).await,
         "/clear" => system::handle_clear(app, args).await,
         "/reset" => system::handle_reset(app, args).await,
@@ -1274,7 +1168,7 @@ async fn handle_slash(app: &mut App, input: &str) {
         "/plan" => plan::handle_plan(app, args).await,
         "/soul" => soul::handle_soul(app, args).await,
         "/themes" => theming::handle_themes(app, args).await,
-        "/doctor" => doctor::handle_doctor(app, args).await,
+        "/coder" => coder::handle_coder(app, args).await,
         _ => {
             app.add_system_message(format!("Unknown command: {}. Type /help", cmd_name));
         }
@@ -1323,7 +1217,66 @@ async fn handle_shell(app: &mut App, cmd: &str) {
     crate::shell::run_shell_command(app, cmd).await;
 }
 
+/// Launch an external coder tool (claude-code, codex, opencode) as a subprocess.
+async fn handle_coder_external(app: &mut App, task: &str) {
+    let (cmd_name, args) = match app.coder_backend.as_str() {
+        "claude-code" => ("claude", vec!["--print", task]),
+        "codex" => ("codex", vec!["-q", task]),
+        "opencode" => ("opencode", vec!["-p", task]),
+        other => {
+            app.add_error_message(format!("Unknown coder backend: {}", other));
+            return;
+        }
+    };
+
+    app.show_banner = false;
+    app.task_count += 1;
+    app.agent_running = true;
+    app.agent_start = std::time::Instant::now();
+    app.spinner_text = format!("Running {}...", cmd_name);
+    app.interrupt.clear();
+
+    app.add_user_message(task.to_string(), app.task_count);
+    app.start_agent_message(task);
+
+    let output = tokio::process::Command::new(cmd_name)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await;
+
+    let elapsed = app.agent_start.elapsed().as_secs();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let success = out.status.success();
+            let result_text = if stdout.is_empty() { stderr.clone() } else { stdout };
+
+            app.complete_agent_message(success, result_text, elapsed, None, None);
+
+            if success {
+                app.add_system_message(format!("{} done ({}s)", cmd_name, elapsed));
+            } else {
+                app.add_error_message(format!("{} failed ({}s): {}", cmd_name, elapsed, stderr));
+            }
+        }
+        Err(e) => {
+            app.complete_agent_message(false, format!("Failed to launch {}: {}", cmd_name, e), elapsed, None, None);
+            app.add_error_message(format!("Is '{}' installed? Error: {}", cmd_name, e));
+        }
+    }
+}
+
 pub async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSender<AppEvent>) {
+    // Route Coder mode with external backend to subprocess
+    if app.agent_mode == crate::app::AgentMode::Coder && app.coder_backend != "internal" {
+        handle_coder_external(app, task).await;
+        return;
+    }
+
     app.show_banner = false;
     app.task_count += 1;
     app.agent_running = true;

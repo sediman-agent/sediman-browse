@@ -13,6 +13,4 @@ pub enum AppEvent {
     AgentDone,
     CommandOutput(String),
     StreamingToken(String, String),
-    DoctorInstallOutput(String),
-    DoctorInstallDone(usize, bool),
 }

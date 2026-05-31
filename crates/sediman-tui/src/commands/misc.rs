@@ -14,7 +14,7 @@ pub async fn handle_usage(app: &mut App, _args: &str) {
             ModalLine::normal(format!("  Tasks run     {}", app.task_count)),
             ModalLine::normal(format!("  Est. tokens   ~{}", est_tokens)),
             ModalLine::normal(format!("  Messages      {}", app.messages.len())),
-            ModalLine::normal(format!("  Model         {}/{}", app.provider, app.model.as_deref().unwrap_or("default"))),
+            ModalLine::normal(format!("  Model         {}", app.display_model_id())),
             ModalLine::normal(format!("  Agent         {}", if app.agent_running { "running" } else { "idle" })),
         ],
         scroll: 0,

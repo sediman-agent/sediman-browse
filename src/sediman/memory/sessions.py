@@ -77,3 +77,12 @@ async def get_session_by_id(session_id: str) -> dict[str, Any] | None:
         except (json.JSONDecodeError, TypeError):
             data["steps"] = []
         return data
+
+
+async def delete_session(session_id: str) -> bool:
+    async with _get_conn() as conn:
+        await conn.execute("DELETE FROM session_steps WHERE session_id = ?", (session_id,))
+        await conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        await conn.commit()
+    logger.info("session_deleted", session_id=session_id)
+    return True

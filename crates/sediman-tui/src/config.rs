@@ -30,15 +30,16 @@ pub struct TuiConfig {
     #[serde(default = "default_headless")]
     pub headless: bool,
 
-    /// User's saved model identifiers (e.g. "openai:gpt-4o", "ollama:qwen3")
-    #[serde(default)]
-    pub saved_models: Vec<String>,
+    /// Coder backend: "internal", "claude-code", "codex", "opencode"
+    #[serde(default = "default_coder_backend")]
+    pub coder_backend: String,
 }
 
 fn default_theme() -> String { "default".into() }
 fn default_permission() -> String { "ask".into() }
 fn default_side_tab() -> String { "Status".into() }
 fn default_headless() -> bool { true }
+fn default_coder_backend() -> String { "internal".into() }
 
 impl Default for TuiConfig {
     fn default() -> Self {
@@ -48,7 +49,7 @@ impl Default for TuiConfig {
             side_panel_open: false,
             side_panel_tab: default_side_tab(),
             headless: default_headless(),
-            saved_models: Vec::new(),
+            coder_backend: default_coder_backend(),
         }
     }
 }
@@ -111,7 +112,7 @@ mod tests {
             side_panel_open: true,
             side_panel_tab: "Skills".into(),
             headless: false,
-            saved_models: vec!["openai:gpt-4o".into(), "ollama:qwen3".into()],
+            coder_backend: "internal".into(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: TuiConfig = toml::from_str(&toml_str).unwrap();

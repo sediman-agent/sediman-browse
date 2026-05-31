@@ -189,11 +189,6 @@ impl ApiClient {
         Ok(())
     }
 
-    pub async fn hub_info(&self, name: &str) -> BridgeResult<HubSkill> {
-        self.call("hub.info", serde_json::json!({"name": name}))
-            .await
-    }
-
     pub async fn hub_info_detail(&self, name: &str) -> BridgeResult<HubSkillDetail> {
         self.call("hub.info", serde_json::json!({"name": name}))
             .await
@@ -281,6 +276,15 @@ impl ApiClient {
 
     pub async fn get_sessions(&self) -> BridgeResult<Vec<SessionInfo>> {
         self.call("sessions.list", serde_json::json!({})).await
+    }
+
+    pub async fn get_session_detail(&self, session_id: &str) -> BridgeResult<serde_json::Value> {
+        self.call("sessions.get", serde_json::json!({"session_id": session_id})).await
+    }
+
+    pub async fn delete_session(&self, session_id: &str) -> BridgeResult<()> {
+        let _: serde_json::Value = self.call("sessions.delete", serde_json::json!({"session_id": session_id})).await?;
+        Ok(())
     }
 
     pub async fn get_screenshot(&self) -> BridgeResult<Vec<u8>> {

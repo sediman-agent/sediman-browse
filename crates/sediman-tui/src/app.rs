@@ -4,14 +4,6 @@ use tokio::sync::mpsc;
 
 use sediman_tui_bridge::ApiClient;
 
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct ModelEntry {
-    pub id: String,
-    pub name: String,
-    pub provider: String,
-    pub is_current: bool,
-}
 use sediman_tui_core::{
     renderer::{CellBuffer, AnsiWriter, DiffEngine},
     event::{AppEvent, EventLoop},
@@ -39,47 +31,21 @@ pub enum AppModal {
     Help {
         scroll: u16,
     },
+    /// OpenCode-style unified model picker: ←/→ switch provider, ↑/↓ switch model
     ModelPicker,
-    ProviderPicker,
-    ConnectPicker,
     ApiKeyPrompt,
     MemoryEditor,
     SoulEditor,
     SkillBrowser,
     ScheduleBrowser,
+    SessionBrowser,
     ThemePicker,
+    CoderPicker,
     Info {
         title: String,
         lines: Vec<ModalLine>,
         scroll: u16,
     },
-    Doctor {
-        checks: Vec<DoctorCheck>,
-        cursor: usize,
-        scroll: u16,
-        installing: bool,
-        install_output: Vec<String>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(dead_code)]
-pub enum DoctorStatus {
-    Pass,
-    Warn,
-    Fail,
-    Pending,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct DoctorCheck {
-    pub category: &'static str,
-    pub name: &'static str,
-    pub status: DoctorStatus,
-    pub message: String,
-    pub optional: bool,
-    pub install_cmd: Option<String>,
 }
 
 /// A line in an info modal, with optional styling.
@@ -149,7 +115,7 @@ pub struct App {
     pub streaming_phase: String,
 
     pub agent_mode: AgentMode,
-    pub pending_paste: Option<String>,
+    pub coder_backend: String, // "internal", "claude-code", "codex", "opencode"
 
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
@@ -164,18 +130,14 @@ pub struct App {
 
     // Modal system — only one active at a time
     pub active_modal: Option<AppModal>,
-    pub model_picker_index: usize,
-    pub model_picker_list: Vec<String>,
-    pub model_picker_input: String,
-    pub provider_picker_index: usize,
-    pub provider_picker_input: String,
+    // Unified model dialog state (OpenCode-style: ←/→ provider, ↑/↓ model)
+    pub model_dialog_provider_idx: usize,
+    pub model_dialog_model_idx: usize,
+    pub model_dialog_scroll: usize,
     pub available_providers: Vec<sediman_tui_bridge::ProviderInfo>,
     pub connect_target: Option<String>,
     pub api_key_input: String,
-    pub provider_filter: String,
-    pub model_list: Vec<ModelEntry>,
-    #[allow(dead_code)]
-    pub model_filter: String,
+    pub model_list: Vec<sediman_tui_bridge::ModelInfo>,
     // Memory editor state
     pub memory_entries: Vec<(String, String)>, // (target, content)
     pub memory_editor_input: String,
@@ -199,6 +161,13 @@ pub struct App {
     pub theme_picker_names: Vec<String>,
     pub theme_picker_saved_theme: Theme,
     pub theme_picker_saved_name: String,
+    // Coder picker state
+    pub coder_picker_selected: usize,
+    // Session browser state
+    pub session_list: Vec<sediman_tui_bridge::SessionInfo>,
+    pub session_selected: usize,
+    pub session_scroll: u16,
+    pub session_filter: String,
     pub toast_text: String,
     pub toast_expiry: Option<Instant>,
     pub side_panel_scroll: usize,
@@ -324,7 +293,7 @@ impl App {
             streaming_phase: String::new(),
 
             agent_mode: AgentMode::Manager,
-            pending_paste: None,
+            coder_backend: "internal".into(),
 
             messages: Vec::new(),
             scroll_offset: 0,
@@ -338,17 +307,13 @@ impl App {
             pending_resize: None,
 
             active_modal: None,
-            model_picker_index: 0,
-            model_picker_list: Vec::new(),
-            model_picker_input: String::new(),
-            provider_picker_index: 0,
-            provider_picker_input: String::new(),
+            model_dialog_provider_idx: 0,
+            model_dialog_model_idx: 0,
+            model_dialog_scroll: 0,
             available_providers: Vec::new(),
             connect_target: None,
             api_key_input: String::new(),
-            provider_filter: String::new(),
             model_list: Vec::new(),
-            model_filter: String::new(),
             memory_entries: Vec::new(),
             memory_editor_input: String::new(),
             memory_editor_index: 0,
@@ -367,6 +332,11 @@ impl App {
             theme_picker_names: Vec::new(),
             theme_picker_saved_theme: Theme::default(),
             theme_picker_saved_name: String::new(),
+            coder_picker_selected: 0,
+            session_list: Vec::new(),
+            session_selected: 0,
+            session_scroll: 0,
+            session_filter: String::new(),
             toast_text: String::new(),
             toast_expiry: None,
             side_panel_scroll: 0,
@@ -464,6 +434,41 @@ impl App {
 
     pub fn bridge_url(&self) -> &str {
         self.bridge.socket_path_str()
+    }
+
+    pub fn display_model_id(&self) -> String {
+        format!("{}/{}", self.provider, self.model.as_deref().unwrap_or("default"))
+    }
+
+    /// Get models for the active provider tab, sorted reverse alphabetical (OpenCode: latest first).
+    pub fn filtered_models_for_provider(&self, provider_name: &str) -> Vec<&sediman_tui_bridge::ModelInfo> {
+        let mut models: Vec<&sediman_tui_bridge::ModelInfo> = self.model_list
+            .iter()
+            .filter(|m| m.provider == provider_name)
+            .collect();
+        models.sort_by(|a, b| b.name.cmp(&a.name));
+        models
+    }
+
+    /// Initialize the model dialog state for the current provider/model.
+    pub fn open_model_dialog(&mut self) {
+        // Find the provider tab for the current provider
+        self.model_dialog_provider_idx = self
+            .available_providers
+            .iter()
+            .position(|p| p.name == self.provider)
+            .unwrap_or(0);
+        // Find the model within that provider's list
+        let models = self.filtered_models_for_provider(&self.provider);
+        self.model_dialog_model_idx = models
+            .iter()
+            .position(|m| {
+                let full = format!("{}/{}", m.provider, m.id);
+                full == self.display_model_id() || m.id == self.model.as_deref().unwrap_or("")
+            })
+            .unwrap_or(0);
+        self.model_dialog_scroll = 0;
+        self.active_modal = Some(AppModal::ModelPicker);
     }
 }
 
@@ -563,7 +568,7 @@ pub async fn run(
             SideTab::Status => "Status".into(),
         },
         headless: app.headless,
-        saved_models: app.model_picker_list.clone(),
+        coder_backend: app.coder_backend.clone(),
     };
     if let Err(e) = config.save() {
         eprintln!("Warning: {}", e);

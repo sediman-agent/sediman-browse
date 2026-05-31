@@ -52,7 +52,7 @@ pub fn save_config_now(app: &App) {
             crate::app::SideTab::Status => "Status".into(),
         },
         headless: app.headless,
-        saved_models: app.model_picker_list.clone(),
+        coder_backend: app.coder_backend.clone(),
     };
     if let Err(e) = config.save() {
         eprintln!("Warning: {}", e);
