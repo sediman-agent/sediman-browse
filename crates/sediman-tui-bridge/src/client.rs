@@ -114,7 +114,7 @@ impl ApiClient {
                         return Err(BridgeError::Connection(msg));
                     }
                     // Exponential backoff: 100ms, 200ms, 400ms, 800ms... (capped)
-                    let exp = (attempt - 1).min(10) as u32;
+                    let exp = (attempt - 1).min(10);
                     let delay = std::time::Duration::from_millis(100u64.saturating_mul(1u64 << exp));
                     tokio::time::sleep(delay).await;
                 }
