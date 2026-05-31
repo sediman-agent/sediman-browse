@@ -922,7 +922,7 @@ pub fn render_schedule_browser(buf: &mut CellBuffer, area: Rect, app: &App) {
                 if let Some(ref next) = job.next_run {
                     y += 1;
                     buf.draw_str(inner_x + 2, y, &format!("next: {}", next),
-                        Style::new().fg(t.text_muted).bg(if selected && false { t.primary } else { t.background }));
+                        Style::new().fg(t.text_muted).bg(t.background));
                 }
             }
             y += 1;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use sediman_tui_core::command::{Command, CommandCategory};
 use sediman_tui_core::event::AppEvent;
 

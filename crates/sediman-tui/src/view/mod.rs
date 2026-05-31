@@ -21,7 +21,7 @@ pub fn render_into(buf: &mut CellBuffer, app: &mut App) {
     let editor_lines = app.editor.visual_lines(approx_inner).max(1) as u16;
     // Layout: separator(1) + top_border(1) + content(editor_lines) + bottom_border+hints(1)
     let needed = editor_lines + 3;
-    app.layout.input_lines = needed.max(5).min(15); // min 5 rows, max 15 rows
+    app.layout.input_lines = needed.clamp(5, 15); // min 5 rows, max 15 rows
 
     let show_side = app.show_side_panel;
     app.layout.show_side_panel = show_side;
@@ -66,7 +66,7 @@ pub fn render_into(buf: &mut CellBuffer, app: &mut App) {
         use sediman_tui_core::renderer::{Style, TextAttributes, display_width};
         let t = &app.theme;
         let text = &app.toast_text;
-        let tw = display_width(text) as u16 + 4;
+        let tw = display_width(text) + 4;
         let area = buf.area();
         let tx = area.x + (area.width.saturating_sub(tw)) / 2;
         let ty = area.bottom().saturating_sub(3);

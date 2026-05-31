@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use sediman_tui_core::command::{Command, CommandCategory};
 
 use crate::app::{App, AppModal, DoctorCheck, DoctorStatus};
@@ -272,7 +273,7 @@ async fn check_system(bridge: &sediman_tui_bridge::ApiClient) -> Vec<DoctorCheck
             category: "System",
             name: "Config directory",
             status: DoctorStatus::Pass,
-            message: format!("~/.sediman/"),
+            message: "~/.sediman/".to_string(),
             optional: false,
             install_cmd: None,
         });

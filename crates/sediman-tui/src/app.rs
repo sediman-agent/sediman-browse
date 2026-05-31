@@ -63,6 +63,7 @@ pub enum AppModal {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum DoctorStatus {
     Pass,
     Warn,
@@ -71,6 +72,7 @@ pub enum DoctorStatus {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DoctorCheck {
     pub category: &'static str,
     pub name: &'static str,
@@ -110,6 +112,7 @@ impl ModalLine {
     pub fn blank() -> Self { Self::new(String::new(), ModalLineStyle::Normal) }
 }
 
+#[allow(dead_code)]
 pub struct App {
     pub provider: String,
     pub model: Option<String>,
